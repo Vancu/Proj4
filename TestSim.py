@@ -112,7 +112,7 @@ class TestSim:
         self.pkt.deliver(dest, self.t.time()+5)
 
     def ping(self, source, dest, msg):
-        self.sendCMD(self.CMD_PING, source, "{0}{1}".format(chr(dest),msg));
+        self.sendCMD(self.CMD_PING, source,"{0}{1}".format(chr(dest),msg));
 
     def neighborDMP(self, destination):
         self.sendCMD(self.CMD_NEIGHBOR_DUMP, destination, "neighbor command");
@@ -132,12 +132,15 @@ def main():
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
+    s.addChannel(s.NEIGHBOR_CHANNEL);
+    s.addChannel(s.FLOODING_CHANNEL);
 
     s.runTime(20);
     s.ping(1, 2, "Hello, World");
     s.runTime(10);
-    s.ping(1, 3, "Hi!");
+    s.ping(1, 19, "Hello 1 to 19");
+    s.runTime(10);
+    s.neighborDMP(2);
     s.runTime(20);
-
 if __name__ == '__main__':
     main()

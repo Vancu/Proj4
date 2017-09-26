@@ -84,11 +84,31 @@ implementation{
 			return FALSE;
 	}
 
+	command bool List.isFull()
+	{
+		if (size == MAX_SIZE)
+			return TRUE;
+		else
+			return FALSE;
+	}
+
 	command uint16_t List.size(){
 		return size;
 	}
 
 	command t List.get(uint16_t position){
 		return container[position];
+	}
+	command t List.removefromList(uint16_t position)
+	{
+		t temp;
+		uint16_t i = 0;
+		temp = container[position];
+		for(i = 0; i < position; i++) {
+			container[i+1] = container[i];
+		}
+		container[0] = temp;
+		temp = call List.popfront();
+		return temp;
 	}
 }
