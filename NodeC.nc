@@ -43,7 +43,13 @@ implementation {
 
     components new TimerMilliC() as MyTimerC; //create a new timer with alias "myTimerC"
     Node.periodicTimer-> MyTimerC;
+   
+    //components new TimerMilliC() as LSP_TimerC;
+    //Node.LSP_Timer-> LSP_TimerC;
 
     components RandomC as Random;
     Node.Random -> Random;
+
+    components new ListC(RoutedTable, 32) as RoutedTableStorageC;
+    Node.RoutedTableStorage-> RoutedTableStorageC;
 }

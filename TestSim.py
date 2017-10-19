@@ -10,6 +10,7 @@ from CommandMsg import *
 class TestSim:
     # COMMAND TYPES
     CMD_PING = 0
+    CMD_LINKSTATE_DUMP = 2
     CMD_NEIGHBOR_DUMP = 1
     CMD_ROUTE_DUMP=3
 
@@ -120,10 +121,13 @@ class TestSim:
     def routeDMP(self, destination):
         self.sendCMD(self.CMD_ROUTE_DUMP, destination, "routing command");
 
+    def linkstateDMP(self, destination):
+	self.sendCMD(self.CMD_LINKSTATE_DUMP, destination, "print link_table command"); 
+   
     def addChannel(self, channelName, out=sys.stdout):
         print 'Adding Channel', channelName;
         self.t.addChannel(channelName, out);
-
+	
 def main():
     s = TestSim();
     s.runTime(10);
@@ -134,13 +138,23 @@ def main():
     s.addChannel(s.GENERAL_CHANNEL);
     s.addChannel(s.NEIGHBOR_CHANNEL);
     s.addChannel(s.FLOODING_CHANNEL);
+    s.addChannel(s.ROUTING_CHANNEL);
 
-    s.runTime(20);
+    
+    s.runTime(300);
     s.ping(1, 2, "Hello, World");
-    s.runTime(10);
+    s.runTime(150);
     s.ping(1, 19, "Hello 1 to 19");
-    s.runTime(10);
+    s.runTime(150);
     s.neighborDMP(2);
-    s.runTime(20);
+    s.runTime(150);
+    s.linkstateDMP(1);
+    s.runTime(150);
+    s.linkstateDMP(7);
+    s.runTime(150);
+    s.linkstateDMP(14);
+    s.runTime(150);
+    s.neighborDMP(14);
+    s.runTime(150);
 if __name__ == '__main__':
     main()

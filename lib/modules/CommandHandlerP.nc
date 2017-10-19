@@ -63,7 +63,7 @@ implementation{
                 signal CommandHandler.printLinkState();
                 break;
 
-            case CMD_ROUTETABLE_DUMP:
+            case CMD_ROUTE_DUMP:
                 dbg(COMMAND_CHANNEL, "Command Type: Route Table Dump\n");
                 signal CommandHandler.printRouteTable();
                 break;

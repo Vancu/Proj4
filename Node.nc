@@ -12,7 +12,7 @@
 #include "includes/CommandMsg.h"
 #include "includes/sendInfo.h"
 #include "includes/channels.h"
-
+//#include "includes/LSP.h"
 //Struct for Neighbor which houses NODE ID AND NumofPings
 typedef nx_struct LinkedNeighbor {
 	//Node ID and Number of Pings is Stored. This is how we determine the age of the neighbor
@@ -20,10 +20,19 @@ typedef nx_struct LinkedNeighbor {
 	nx_uint8_t NumofPings;
 }LinkedNeighbor;
 
+typedef nx_struct RoutedTable {
+        //Node ID and Number of Pings is Stored. This is how we determine the age of the neighbor
+        nx_uint16_t Node_ID;
+        nx_uint8_t Cost;
+	nx_uint8_t Next;
+	nx_uint8_t sequence;
+}RoutedTable;
+
 module Node{
    uses interface Boot;
    uses interface Timer<TMilli> as periodicTimer; //Interface that was wired above.
-
+   
+   //uses interface Timer<TMilli> as LSP_Timer; //Interface that was wired above.
    //List of packs to store the info of identified packets, along if we've seen it or not  
    uses interface List<pack> as PacketStorage;   
 
@@ -34,17 +43,23 @@ module Node{
    uses interface List<LinkedNeighbor > as NeighborsDropped;
    
    uses interface SplitControl as AMControl;
+
+   // Flooding Portion
    uses interface Receive;
    uses interface SimpleSend as Sender;
+
+
    uses interface CommandHandler;
    uses interface Random as Random;
+   uses interface List<RoutedTable  > as RoutedTableStorage;
 }
 
 //These are stored in each node
 implementation{
    pack sendPackage;
    uint16_t sequence = 0;
-
+   //uint16_t CostCount = 0;
+   uint16_t LSP_Limit = 0;
    // Prototypes (aka function definitions that are exclusively in this implimentation
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
@@ -57,10 +72,13 @@ implementation{
    //Look through our NeighborList to see if it's a new neighbor or not
    void findNeighbor();
 
+   //Look through our network and calculate a cost to reach that path
+   void findRoute();
+
    event void Boot.booted(){
       uint32_t begin, timeDifference;    
       uint16_t sign;     
-      
+
       //Begin is determine how much milliseconds after Boot is called to start firing, which is between 0 to 3.5 seconds
       begin = call Random.rand32() % 3500;
 
@@ -81,7 +99,7 @@ implementation{
 
       //The reason why we want to fire every now and then is because we don't want the network to constantly be dropping packets because another
       //node is firing at the same time. We want them to be discovering their neighbors at a logical timeframe
-      dbg(GENERAL_CHANNEL, "Booted with the beginning time starting at %d, where the periodic call is fired every %d milliseconds\n", begin, timeDifference);
+      //dbg(GENERAL_CHANNEL, "Booted with the beginning time starting at %d, periodic call fired every %d milliseconds. RouteTimeCheck set to %d ms\n", begin, timeDifference, RouteTimeCheck);
       //dbg(GENERAL_CHANNEL, "Booted Successfully!");
   }
 
@@ -100,7 +118,9 @@ implementation{
    event void periodicTimer.fired() 
 	{
 		//dbg(GENERAL_CHANNEL, "I'm going to fire a findNeighbor() function\n");
-		findNeighbor();	
+		findNeighbor();
+		if (LSP_Limit % 2 == 1 && LSP_Limit > 1)
+              		findRoute();
 	}
 
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len){
@@ -117,9 +137,109 @@ implementation{
 			//dbg(FLOODING_CHANNEL, "TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
 			//return msg;
 		}
-	
+		
+		//Check to see if this is a packet for calculating routing table
+		else if(myMsg->dest == AM_BROADCAST_ADDR && myMsg->protocol == PROTOCOL_LINKSTATE)
+		{
+			RoutedTable PartialTable;
+                	//uint16_t m = 0;
+			pack ForwardedNeighborRoute;
+			//We will compare the Packet's NeighborList as it represents the source's list of neighbors with the current node's 
+			//list of neighbors.
+			uint16_t i, k, true, RealCost = -1;
+			//uint16_t Table_Length = call RoutedTableStorage.size();
+			//uint16_t NodeNeighborLength = call NeighborStorage.size();
+			//LinkedNeighbor NeighborfromNode;
+			uint16_t CostCount = MAX_TTL - myMsg->TTL;
+			//Here, we want to check the Packet's List of Neighbors 
+			//and compare with Node's List of Neighbors.
+			//
+			
+			//dbg(ROUTING_CHANNEL, "Node: %d Has successfully received an LSP Packet from Node %d! CostCount: %d \n", TOS_NODE_ID, myMsg->src, CostCount);
+			//dbg(ROUTING_CHANNEL, "Payload's Array length is: %d \n", call RoutedTableStorage.size());
+			for(i = 0; i < call RoutedTableStorage.size(); i++)
+			{	
+				true = 0;		
+				if (myMsg->payload[i] <= 0)
+                                { 
+					break;
+				}
+				//dbg(ROUTING_CHANNEL, "Payload's Array Index %d Has Neighbor: %d \n",i, myMsg->payload[i]);
+		
+				for(k = 0; k < call RoutedTableStorage.size(); k++)
+				{
+					PartialTable = call RoutedTableStorage.get(k);
+					if (myMsg->payload[i] == PartialTable.Node_ID || TOS_NODE_ID == myMsg->payload[i])
+					{	
+						//if(PartialTable.Cost < CostCount )
+						//{
+							//RoutedTable removeLinked;
+			                                //removeLinked = call RoutedTableStorage.removefromList(k);
+        	                        		//dbg(ROUTING_CHANNEL, "Supposedly found an equal and going to drop it because the cost is lower\n");
+                	                		//call NeighborsDropped.pushfront(NeighborNode);
+                        			        //k--;
+                        			        //Table_Length--;
+							//dbg(ROUTING_CHANNEL, "WE FOUND A MATCH, MARK TRUE AND WE SUPPOSEDLY IGNORE IT \n");
+							true++;
+							//break; 
+						//}
+						//else
+						//{
+						 	//true++;
+                                                        //break;
+						//}
+					}
+				}
+				//i++;
+				if (true == 0)
+				{
+					RoutedTable UndescoveredNeighbor;
+					UndescoveredNeighbor.Node_ID = myMsg->payload[i];
+					
+					//dbg(ROUTING_CHANNEL, "Payload is: %d      while myMsg->src is: %d \n", myMsg->payload[i], myMsg->src);
+					//dbg(ROUTING_CHANNEL, "myMsg->payload[i] - TOS_NODE_ID is: %d \n", myMsg->payload[i] - TOS_NODE_ID );					
+					//	if (myMsg->payload[i] - TOS_NODE_ID == 1)
+					//		UndescoveredNeighbor.Cost = CostCount + 1;
+					//	else if (myMsg->payload[i] - myMsg->src == -1) 
+					//		UndescoveredNeighbor.Cost = CostCount - 1;
+					//	else
+					//		UndescoveredNeighbor.Cost = 0;
+			
+					//dbg(ROUTING_CHANNEL, "Payload for determining cost is: %d \n", myMsg->payload[i]);
+					RealCost = myMsg->payload[i] - TOS_NODE_ID;
+					//dbg(ROUTING_CHANNEL, "before RealCost: %d \n", RealCost);
+					if (myMsg->payload[i] - TOS_NODE_ID < 0)
+						RealCost = TOS_NODE_ID - myMsg->payload[i];
+                                        
+					//dbg(ROUTING_CHANNEL, "After RealCost: %d \n", RealCost); 
+					//UndescoveredNeighbor.Cost = CostCount + 1;
+                                        UndescoveredNeighbor.Cost = RealCost;
+					UndescoveredNeighbor.Next = myMsg->src;
+                                        call RoutedTableStorage.pushback(UndescoveredNeighbor);
+				}	  			
+			}
+
+        	//dbg(ROUTING_CHANNEL, "We checked all of LSP's directly connected neighbors. Printing out the table so far \n");
+        	//dbg(ROUTING_CHANNEL, "----------Node %d's Table--------- \n", TOS_NODE_ID);
+        	//while(m < call RoutedTableStorage.size())
+        	//{       
+                	//PartialTable = call RoutedTableStorage.get(m); 
+                	//dbg(ROUTING_CHANNEL, "Node_ID: %d  Cost: %d    Next:%d \n", PartialTable.Node_ID, PartialTable.Cost, PartialTable.Next);
+                	//m++;
+        	//}
+
+		
+                makePack(&ForwardedNeighborRoute, TOS_NODE_ID, AM_BROADCAST_ADDR, myMsg->TTL - 1, PROTOCOL_LINKSTATE, myMsg->seq, (uint8_t*) myMsg->payload, (uint8_t) sizeof(myMsg->payload));
+                pushPack(ForwardedNeighborRoute);
+		call Sender.send(ForwardedNeighborRoute, AM_BROADCAST_ADDR);
+
+
+			
+		}
+
+
 		//HERE, CHECK TO SEE IF THIS IS A PACKET CHECKING FOR ITS NEIGHBORS, THIS IS SEPARATE FROM FLOODING
-	        else if(myMsg->dest == AM_BROADCAST_ADDR)
+	        else if(myMsg->dest == AM_BROADCAST_ADDR && (myMsg->protocol == PROTOCOL_PING || myMsg->protocol == PROTOCOL_PINGREPLY))
         	{
 	        	uint16_t length, i = 0;
         		LinkedNeighbor Neighbor, Neighbor2;
@@ -176,11 +296,30 @@ implementation{
 				}
 				else 
 				{
+					RoutedTable ImmediateNeighbor;
 					//not in list, so we're going to add it
 					//dbg(NEIGHBOR_CHANNEL, "%d not found, put in list\n", myMsg->src);
 					Neighbor.Node_ID = myMsg->src;
 					Neighbor.NumofPings = 0;
+					found = FALSE;
 					call NeighborStorage.pushback(Neighbor);
+					
+					for(i = 0; i < call RoutedTableStorage.size(); i++)
+                        		{
+						ImmediateNeighbor = call RoutedTableStorage.get(i);
+                                        	if (myMsg->src == ImmediateNeighbor.Node_ID)
+                                        	{
+							found = TRUE;
+						}	
+					}
+					if (!found)				
+					{
+						ImmediateNeighbor.Node_ID = myMsg->src;
+						ImmediateNeighbor.Cost = 1;
+						ImmediateNeighbor.Next = myMsg->src;
+						ImmediateNeighbor.sequence = 0;
+						call RoutedTableStorage.pushback(ImmediateNeighbor); 
+					}
 				}
 			}
 			
@@ -193,7 +332,8 @@ implementation{
 	else if(myMsg->dest == TOS_NODE_ID && myMsg->protocol == PROTOCOL_PING)
 	{
         	dbg(FLOODING_CHANNEL, "Received packet from %d has arrived! Package Payload: %s\n",myMsg->src, myMsg->payload);
-		
+		dbg(FLOODING_CHANNEL, "Sending the ACK packet to Node: %d...\n", myMsg->src);
+			
 		//Hooray! We've successfuly delivered the packet. Now we have to send a ping reply to the initial source
 
 		//Before we make an ACK packet, increment sequence by 1 since it's a different packet and push a newly created ACK packet to the list PacketStorage
@@ -215,6 +355,7 @@ implementation{
          	dbg(FLOODING_CHANNEL, "Received ACK packet from %d, where that was the original destination.\n", myMsg->src);
 		//dbg(FLOODING_CHANNEL, "Recieved packet, STATS... Payload: %s\n", myMsg->payload);
 		//return msg;
+		sequence++;
 	}	
 
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
@@ -242,7 +383,7 @@ implementation{
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload)
 {
 	dbg(GENERAL_CHANNEL, "PING EVENT \n");
-      	makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
+      	makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING, sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
       	call Sender.send(sendPackage, AM_BROADCAST_ADDR);
      	//dbg(GENERAL_CHANNEL, "RESETTING foundPack BOOL \n");
 }
@@ -269,11 +410,29 @@ implementation{
 
 }
 
-   event void CommandHandler.printRouteTable(){}
+   event void CommandHandler.printRouteTable()
+{
 
-   event void CommandHandler.printLinkState(){}
+}
 
-   event void CommandHandler.printDistanceVector(){}
+   event void CommandHandler.printLinkState()
+{
+        RoutedTable PartialTable;
+        uint16_t m = 0;
+        dbg(ROUTING_CHANNEL, "We checked all of LSP's directly connected neighbors. Printing out the table so far \n");
+        dbg(ROUTING_CHANNEL, "----------Node %d's Table--------- \n", TOS_NODE_ID);
+        while(m < call RoutedTableStorage.size())
+        {
+                PartialTable = call RoutedTableStorage.get(m);
+                dbg(ROUTING_CHANNEL, "Node_ID: %d  Cost: %d    Next:%d \n", PartialTable.Node_ID, PartialTable.Cost, PartialTable.Next);
+                m++;
+        }
+}
+
+   event void CommandHandler.printDistanceVector()
+{
+  
+}
 
    event void CommandHandler.setTestServer(){}
 
@@ -332,6 +491,7 @@ implementation{
 	char* message = "this is a test\n";
 	//Age all NeighborList first if list is not empty
 	//dbg(GENERAL_CHANNEL, "Discovery activated: %d checking list for neighbors\n", TOS_NODE_ID);
+	LSP_Limit++;
 	if(!call NeighborStorage.isEmpty()) {
 		uint16_t sizeofLink = call NeighborStorage.size();
 		uint16_t i = 0;
@@ -344,7 +504,7 @@ implementation{
 		//We drop off any neighbors that have been there for too long, one of the ways to prevent network congestion. Number 7 is picked to acheive this
 		for(i = 0; i < sizeofLink; i++) {
 			temp = call NeighborStorage.get(i);
-			temp.NumofPings++;
+			temp.NumofPings = temp.NumofPings + 1;
 			pings = temp.NumofPings;
 			if(pings > 7) 
 			{
@@ -366,4 +526,42 @@ implementation{
 	call Sender.send(NeighborPack, AM_BROADCAST_ADDR);
    }
 
-} //heo
+   void findRoute()
+   {
+   	//dbg(GENERAL_CHANNEL, "The routeTable Function for Node %d has been activated... \n", TOS_NODE_ID);
+        pack RoutedNeighborPack;
+ 
+       	//Check to first see if the routing table is empty. if so, we fill it with neighbors neighrbor list is empty or not
+       	
+	if(!call NeighborStorage.isEmpty()) 
+	{	
+        	uint16_t i = 0;
+		LinkedNeighbor temp;
+	        uint8_t sizeofLink = (call NeighborStorage.size()) + 1;
+        	uint8_t neighbors [sizeofLink];
+
+		//dbg(ROUTING_CHANNEL, "Node: %d Has successfully made an array of size: %d \n", TOS_NODE_ID, (sizeof(neighbors) / sizeof (uint8_t) - 1));
+		//dbg(GENERAL_CHANNEL, "Or crash here...\n");
+                
+        	for(i = 0; i < sizeofLink; i++) 
+		{
+			temp = call NeighborStorage.get(i);
+			neighbors[i] = temp.Node_ID;
+			//i++;
+			//neighbors[i] = TOS_NODE_ID; 
+		}
+        	
+		neighbors[sizeofLink] = 0;
+		makePack(&RoutedNeighborPack, TOS_NODE_ID, AM_BROADCAST_ADDR, MAX_TTL - 1, PROTOCOL_LINKSTATE, ++sequence, (uint8_t*) neighbors, (uint8_t) sizeof(neighbors));
+       		pushPack(RoutedNeighborPack);
+       		call Sender.send(RoutedNeighborPack, AM_BROADCAST_ADDR);	
+		
+		//dbg(ROUTING_CHANNEL, "Node: %d Has successfully sent out an LSP Packet! \n", TOS_NODE_ID);
+	}
+
+	else
+		dbg(ROUTING_CHANNEL, "Node: %d currently has no neighbors! \n", TOS_NODE_ID);
+
+   }
+	
+} //henlo
