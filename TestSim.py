@@ -141,20 +141,26 @@ def main():
     s.addChannel(s.ROUTING_CHANNEL);
 
     
-    s.runTime(300);
-    s.ping(1, 2, "Hello, World");
-    s.runTime(150);
-    s.ping(1, 19, "Hello 1 to 19");
-    s.runTime(150);
+    s.runTime(60);
     s.neighborDMP(2);
-    s.runTime(150);
+    s.runTime(40);
     s.linkstateDMP(1);
-    s.runTime(150);
+    s.runTime(40);
     s.linkstateDMP(7);
-    s.runTime(150);
-    s.linkstateDMP(14);
-    s.runTime(150);
-    s.neighborDMP(14);
-    s.runTime(150);
+    s.runTime(40);
+    s.linkstateDMP(3);
+    s.runTime(40);
+    s.neighborDMP(9);
+    s.runTime(40);
+    s.neighborDMP(5);
+    s.runTime(40);
+    s.ping(1, 1, "Hello, World");
+    s.runTime(40);
+    s.ping(2, 2, "Hello 2 to 4");
+    s.runTime(40);
+    s.routeDMP(1);
+    s.runTime(40);
+    s.routeDMP(2);
+    s.runTime(40);
 if __name__ == '__main__':
     main()

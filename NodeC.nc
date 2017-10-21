@@ -52,4 +52,10 @@ implementation {
 
     components new ListC(RoutedTable, 32) as RoutedTableStorageC;
     Node.RoutedTableStorage-> RoutedTableStorageC;
+
+    components new ListC(RoutedTable, 32) as TentativeC;
+    Node.Tentative-> TentativeC;
+
+    components new ListC(RoutedTable, 32) as ConfirmedTableC;
+    Node.ConfirmedTable-> ConfirmedTableC;
 }
