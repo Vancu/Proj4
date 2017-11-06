@@ -65,7 +65,7 @@ implementation{
    //uint16_t CostCount = 0;
    uint16_t LSP_Limit = 0;
    bool Route_LSP_STOP = FALSE;
-   //bool Pinged = FALSE; 
+   //bool SentPing = FALSE; 
    // Prototypes (aka function definitions that are exclusively in this implimentation
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
@@ -132,7 +132,13 @@ implementation{
 		{	
 			//Was originally at 11
 			if (LSP_Limit < 17 && LSP_Limit % 3 == 2 && LSP_Limit > 1)
-              			findRoute();
+              		{
+				findRoute();
+			}
+			
+			if (LSP_Limit == 17)
+				Dijkstra(TOS_NODE_ID, 0, TOS_NODE_ID);
+			
 		}
 	}
 
@@ -159,14 +165,13 @@ implementation{
 			//We will compare the Packet's NeighborList as it represents the source's list of neighbors with the current node's 
 			//list of neighbors.
 			bool match;
-			uint16_t i, j;
+			uint16_t i;
 			LinkedNeighbor NeighborfromNode;
 			//uint16_t CostCount;
 			//uint8_t* Payload_Array;
 			uint8_t Payload_Array_Length;
 
 			i = 0;
-			j = 0;
 			Payload_Array_Length = 0;
 			//dbg(ROUTING_CHANNEL, "Node: %d Has successfully received an LSP Packet from Node %d! Cost: %d \n", TOS_NODE_ID, myMsg->src, MAX_TTL - myMsg->TTL);
 			//dbg(ROUTING_CHANNEL, "Payload's Array length is: %d \n", call RoutedTableStorage.size());
@@ -354,26 +359,27 @@ implementation{
 		//Before we make an ACK packet, increment sequence by 1 since it's a different packet and push a newly created ACK packet to the list PacketStorage
                 //then broadcast to it's neighbors.
                 sequence++;
-
  
 		//Lets make the ACK packet by having the TOS_NODE_ID be the source and the destination be the source, and changing the protocol to be PINGREPLY 
 		
-                for(i = 0; i < call RoutedTableStorage.size(); i++)
+                for(i = 0; i < call ConfirmedTable.size(); i++)
                 {
-                        calculatedTable = call RoutedTableStorage.get(i);
+                        calculatedTable = call ConfirmedTable.get(i);
                         if (calculatedTable.Node_ID == myMsg->src)
                         {
-                                makePack(&sendPackage, TOS_NODE_ID, calculatedTable.Next, MAX_TTL, PROTOCOL_PINGREPLY, sequence, ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
+                                makePack(&sendPackage, TOS_NODE_ID, myMsg->src, MAX_TTL, PROTOCOL_PINGREPLY, sequence, ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
                                 pushPack(sendPackage);
-                                call Sender.send(sendPackage, AM_BROADCAST_ADDR);
+				//THIS PART WAS CHANGED
+				//dbg(FLOODING_CHANNEL, "We're going to send this packet to  calculatedTable.Next: %d\n", myMsg->src);
+                                call Sender.send(sendPackage, calculatedTable.Next);
                                 break;
                         }
                 }
 		//makePack(&sendPackage, TOS_NODE_ID, myMsg->src, MAX_TTL, PROTOCOL_PINGREPLY, sequence, (uint8_t *) myMsg->payload, PACKET_MAX_PAYLOAD_SIZE); 
 		
-		pushPack(sendPackage);
+		//pushPack(sendPackage);
 		//dbg(GENERAL_CHANNEL, "pushPack was successful\n");
-		call Sender.send(sendPackage, AM_BROADCAST_ADDR);
+		//call Sender.send(sendPackage, AM_BROADCAST_ADDR);
 		//dbg(GENERAL_CHANNEL, "Call Sender was successful\n");
 		//return msg;
 	}
@@ -392,17 +398,24 @@ implementation{
 		uint8_t i;
 		RoutedTable calculatedTable;
 		//dbg(FLOODING_CHANNEL, "Recieved packet, It's not for it... TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
-	        for(i = 0; i < call RoutedTableStorage.size(); i++)
+		//dbg(FLOODING_CHANNEL, "Size of ConfirmedTable is %d\n", call ConfirmedTable.size());
+	        makePack(&sendPackage, myMsg->src, myMsg->dest, myMsg->TTL--, myMsg->protocol, myMsg->seq, ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
+                pushPack(sendPackage);
+		for(i = 0; i < call ConfirmedTable.size(); i++)
         	{       
-                	calculatedTable = call RoutedTableStorage.get(i);
-                	if (calculatedTable.Node_ID == myMsg->dest)
+                	calculatedTable = call ConfirmedTable.get(i);
+                	//dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d \n", calculatedTable.Node_ID,  calculatedTable.Cost,  calculatedTable.Next);
+			if (calculatedTable.Node_ID == myMsg->dest)
                 	{       
-                	        makePack(&sendPackage, myMsg->src, calculatedTable.Next, myMsg->TTL--, myMsg->protocol, myMsg->seq, ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
-                	        pushPack(sendPackage);
-				call Sender.send(sendPackage, AM_BROADCAST_ADDR);
-                	        break;
+                	        //makePack(&sendPackage, myMsg->src, myMsg->dest, myMsg->TTL--, myMsg->protocol, myMsg->seq, ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
+                	        //pushPack(sendPackage);
+				//dbg(FLOODING_CHANNEL, "We're going to send this packet to  calculatedTable.Next: %d\n", calculatedTable.Next);
+				call Sender.send(sendPackage, calculatedTable.Next);
+                	        //break;
                 	}
         	}
+		
+		//call Sender.send(sendPackage, calculatedTable.Next);
 		//makePack(&sendPackage, (myMsg->src), (myMsg->dest), (myMsg->TTL--), (myMsg->protocol), (myMsg->seq), ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
 		//pushPack(sendPackage);
 		//call Sender.send(sendPackage, AM_BROADCAST_ADDR);
@@ -425,18 +438,20 @@ implementation{
 {
 	uint8_t i;
 	RoutedTable calculatedTable;
-	dbg(GENERAL_CHANNEL, "PING EVENT \n");
-      	Dijkstra(TOS_NODE_ID, 0, TOS_NODE_ID);
-       //for(i = 0; i < call RoutedTableStorage.size(); i++)
-        //{       
-        //        calculatedTable = call RoutedTableStorage.get(i);
-	//	if (calculatedTable.Node_ID == destination)
-	//	{
-	//		makePack(&sendPackage, TOS_NODE_ID, calculatedTable.Next, MAX_TTL, PROTOCOL_PING, ++sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
-       	//		call Sender.send(sendPackage, AM_BROADCAST_ADDR);
-	//		break;
-	//	}
-	//}	
+	//dbg(GENERAL_CHANNEL, "PING EVENT \n");
+      	//Dijkstra(TOS_NODE_ID, 0, TOS_NODE_ID);
+      	for(i = 0; i < call ConfirmedTable.size(); i++)
+        {
+		       
+             	calculatedTable = call ConfirmedTable.get(i);
+		if (calculatedTable.Node_ID == destination)
+		{
+			makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING, ++sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
+       			//CHANGED Sender.send
+			call Sender.send(sendPackage, calculatedTable.Next);
+			break;
+		}
+	}	
 	//makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING, sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
       	//call Sender.send(sendPackage, AM_BROADCAST_ADDR);
      	//dbg(GENERAL_CHANNEL, "RESETTING foundPack BOOL \n");
@@ -592,6 +607,7 @@ implementation{
 			{
 				LSP_Limit = 0;
 				NeighborNode = call NeighborStorage.removefromList(i);
+				call NeighborStorage.popback();
 				//dbg(NEIGHBOR_CHANNEL, "Node %d dropped due to more than 7 pings\n", NeighborNode.Node);
 				call NeighborsDropped.pushfront(NeighborNode);
 				i--;
@@ -654,7 +670,7 @@ implementation{
    {
         RoutedTable NewConfirmed, Node_Next, CheckTentative, CheaperTentative, CheckConfirmed;
 	LinkedNeighbor Next_Neighbor;
-	uint8_t ImmediateNeighbor, RTS_Index, NeighborIndex, LSP_Index, TentativeSize, TentativeIndex, CT_Index, Replacing_Tentative_Index, Cheaper_T_Index;
+	uint8_t RTS_Index, NeighborIndex, LSP_Index, TentativeSize, TentativeIndex, CT_Index, Cheaper_T_Index;
 	bool inTentative, inConfirmed;
 	NewConfirmed.Node_ID = Destination;
         NewConfirmed.Cost = Cost;
