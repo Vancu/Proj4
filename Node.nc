@@ -487,14 +487,14 @@ implementation{
 
         if(size == 0)
         {
-                //dbg(GENERAL_CHANNEL, "No route found in Node %d\n", TOS_NODE_ID);
-        	Dijkstra(TOS_NODE_ID, 0, 0);
+                dbg(GENERAL_CHANNEL, "No route found in Node %d\n", TOS_NODE_ID);
+        	//Dijkstra(TOS_NODE_ID, 0, 0);
 	}
 
         
       	size = call ConfirmedTable.size();
-                dbg(GENERAL_CHANNEL, "Dumping Route list for Node %d\n", TOS_NODE_ID);
-                for(i = 0; i < size; i++)
+        dbg(GENERAL_CHANNEL, "Dumping Route list for Node %d\n", TOS_NODE_ID);
+        for(i = 0; i < size; i++)
         {
         	calculatedTable = call ConfirmedTable.get(i);
         	dbg(GENERAL_CHANNEL, "Node: %d, Cost: %d, NextHop: %d\n", calculatedTable.Node_ID, calculatedTable.Cost, calculatedTable.Next);
