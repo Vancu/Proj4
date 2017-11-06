@@ -877,6 +877,28 @@ implementation{
              		       	inConfirmed = TRUE;
 				dbg(ROUTING_CHANNEL, "We ran into an instance where the last Tentative was in Confirmed and now we're gonna drop it...\n");
                        	}
+		
+			if(!inConfirmed)	
+			{
+				//THE FOLLOWING FOR LOOP IS BUGGY, PLEASE CHECK CAREFULLY
+				if (CheaperTentative.Next == CheckConfirmed.Node_ID)
+				{
+					dbg(ROUTING_CHANNEL, "We fucking found where the last Tentative's Next is in Confirmed's Node_ID. We should perhaps was look into changing Next...\n");
+					CheaperTentative.Next = CheckConfirmed.Next;
+				
+					//SO GO CHECK IF THE NODE_ID CONNECTS TO IMMEDIATE NEIGHBORS	
+					for(NeighborIndex = 0; NeighborIndex < call NeighborStorage.size(); NeighborIndex++)
+					{
+						Next_Neighbor = call NeighborStorage.get(NeighborIndex);
+						if (CheaperTentative.Next == Next_Neighbor.Node_ID)
+						{
+							dbg(ROUTING_CHANNEL, "We Theoretically found the 3rd? hop for next neighbor. 4 May still be buggy but it's not recursive atm...\n");
+							break;
+						}	
+					}
+					
+				}
+			}
                	}
 		
 		//call ConfirmedTable.pushfront(CheaperTentative);
@@ -921,7 +943,34 @@ implementation{
         	        		inConfirmed = TRUE;
                 			dbg(ROUTING_CHANNEL, "We ran into an instance where there was more than one Tentative in list, The shortest was in Confirmed and now we're gonna drop it...\n");
                         	}
+
+	                        //THE FOLLOWING FOR LOOP IS A COPY OF ABOVE AND MAY ALSO BE BUGGY, PLEASE CHECK CAREFULLY
+        	                if(!inConfirmed)
+                	        {
+                        	        //THE FOLLOWING FOR LOOP IS BUGGY, PLEASE CHECK CAREFULLY
+                                	//CHECKTENTATIVE WAS CHANGED AS APOSED TO CHEAPERTENTATIVE
+	                                if (CheaperTentative.Next == CheckConfirmed.Node_ID)
+        	                        {
+                	                        dbg(ROUTING_CHANNEL, "DIFFERENT MESSAGE where the last Tentative's Next is in Confirmed's Node_ID. We should perhaps was look into changing Next...\n");
+	                        	        CheaperTentative.Next = CheckConfirmed.Next;
+	
+		                               //SO GO CHECK IF THE NODE_ID CONNECTS TO IMMEDIATE NEIGHBORS
+        		                       for(NeighborIndex = 0; NeighborIndex < call NeighborStorage.size(); NeighborIndex++)
+              		                       {
+                       		                        Next_Neighbor = call NeighborStorage.get(NeighborIndex);
+                               		                if (CheaperTentative.Next == Next_Neighbor.Node_ID)
+                                       		        {
+                                               		        dbg(ROUTING_CHANNEL, "We Theoretically found A THING? Size is more than 2, change Next and should be pushed?...\n");
+                                                       		break;
+	  	                                        }
+        	                                }
+	
+        	                        }
+               		        }			
+				
 	                }
+			
+                                         
 		
 		//}
                
