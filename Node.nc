@@ -159,13 +159,14 @@ implementation{
 			//We will compare the Packet's NeighborList as it represents the source's list of neighbors with the current node's 
 			//list of neighbors.
 			bool match;
-			uint16_t i;
-			//LinkedNeighbor NeighborfromNode;
+			uint16_t i, j;
+			LinkedNeighbor NeighborfromNode;
 			//uint16_t CostCount;
 			//uint8_t* Payload_Array;
 			uint8_t Payload_Array_Length;
 
 			i = 0;
+			j = 0;
 			Payload_Array_Length = 0;
 			//dbg(ROUTING_CHANNEL, "Node: %d Has successfully received an LSP Packet from Node %d! Cost: %d \n", TOS_NODE_ID, myMsg->src, MAX_TTL - myMsg->TTL);
 			//dbg(ROUTING_CHANNEL, "Payload's Array length is: %d \n", call RoutedTableStorage.size());
@@ -186,10 +187,24 @@ implementation{
 			else 
 			{
 				PartialTable.Node_ID = myMsg->src;
-                        	PartialTable.Cost = MAX_TTL - myMsg->TTL;
+                        	//PartialTable.Cost = MAX_TTL - myMsg->TTL;
                         	PartialTable.Next = myMsg->src;
                         	PartialTable.sequence = myMsg->seq;	
 				
+				while (i < call NeighborStorage.size())
+				{ 
+					NeighborfromNode = call NeighborStorage.get(i);
+					if (myMsg->src == NeighborfromNode.Node_ID)
+					{	
+						PartialTable.Cost = 1;	
+						break;
+					}
+					else
+						PartialTable.Cost = 250;
+					i++;
+				}
+
+				i = 0;
 				//Check to see if we're at the end of the array.
 				while (myMsg->payload[i] > 0)
 				{
@@ -411,17 +426,17 @@ implementation{
 	uint8_t i;
 	RoutedTable calculatedTable;
 	dbg(GENERAL_CHANNEL, "PING EVENT \n");
-      	Dijkstra(TOS_NODE_ID, 0, 0);
-       	for(i = 0; i < call RoutedTableStorage.size(); i++)
-        {       
-                calculatedTable = call RoutedTableStorage.get(i);
-		if (calculatedTable.Node_ID == destination)
-		{
-			makePack(&sendPackage, TOS_NODE_ID, calculatedTable.Next, MAX_TTL, PROTOCOL_PING, ++sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
-       			call Sender.send(sendPackage, AM_BROADCAST_ADDR);
-			break;
-		}
-	}	
+      	Dijkstra(TOS_NODE_ID, 0, TOS_NODE_ID);
+       //for(i = 0; i < call RoutedTableStorage.size(); i++)
+        //{       
+        //        calculatedTable = call RoutedTableStorage.get(i);
+	//	if (calculatedTable.Node_ID == destination)
+	//	{
+	//		makePack(&sendPackage, TOS_NODE_ID, calculatedTable.Next, MAX_TTL, PROTOCOL_PING, ++sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
+       	//		call Sender.send(sendPackage, AM_BROADCAST_ADDR);
+	//		break;
+	//	}
+	//}	
 	//makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_PING, sequence, payload, PACKET_MAX_PAYLOAD_SIZE);
       	//call Sender.send(sendPackage, AM_BROADCAST_ADDR);
      	//dbg(GENERAL_CHANNEL, "RESETTING foundPack BOOL \n");
@@ -639,7 +654,7 @@ implementation{
    {
         RoutedTable NewConfirmed, Node_Next, CheckTentative, CheaperTentative, CheckConfirmed;
 	LinkedNeighbor Next_Neighbor;
-	uint8_t RTS_Index, NeighborIndex, LSP_Index, TentativeSize, TentativeIndex, CT_Index, Replacing_Tentative_Index, Cheaper_T_Index;
+	uint8_t ImmediateNeighbor, RTS_Index, NeighborIndex, LSP_Index, TentativeSize, TentativeIndex, CT_Index, Replacing_Tentative_Index, Cheaper_T_Index;
 	bool inTentative, inConfirmed;
 	NewConfirmed.Node_ID = Destination;
         NewConfirmed.Cost = Cost;
@@ -647,7 +662,7 @@ implementation{
 	NeighborIndex = 0;
         call ConfirmedTable.pushfront(NewConfirmed);
 	
-	//dbg(ROUTING_CHANNEL, "We've started after defining everything at the top. Destination: %d \n", Destination);
+	dbg(ROUTING_CHANNEL, "We've started after defining everything at the top. Destination: %d \n", Destination);
 	
 	//Check to see if we're in the initial start of contructing routing table. The beginning starts at TOS_NODE_ID
 	//If we're not, then we need to aquire the neighbors of the current NewConfirmed.Node_ID so we can look through it's LSP
@@ -691,11 +706,11 @@ implementation{
                                                         				//We found a cost that on Tentative List that's less than what it would cost for the neighbor.
                                                         				//Replace entry by first removing that index from the list, then push the cheaper cost and NextHop with it.
 	
-        	                                                			//dbg(ROUTING_CHANNEL, "Here, we do the thing where we found a cheaper Tentative path and replace it. \n", Destination);
-                	                                        			CheaperTentative = call Tentative.removefromList(TentativeIndex);
-											CheaperTentative.Cost = Node_Next.Cost + 1;
-                                	                        			CheaperTentative.Next = Destination;
-                                        	                			call Tentative.pushfront(CheaperTentative);
+        	                                                			dbg(ROUTING_CHANNEL, "Here, we do the thing where we found a cheaper Tentative path and replace it. \n", Destination);
+                	                                        			//CheaperTentative = call Tentative.removefromList(TentativeIndex);
+											//CheaperTentative.Cost = Node_Next.Cost + 1;
+                                	                        			//CheaperTentative.Next = Destination;
+                                        	                			//call Tentative.pushfront(CheaperTentative);
                                                 	        			//inTentative = TRUE;
                                                 				}
                                                 				if (CheckTentative.Node_ID == Node_Next.AllNeighbors[NeighborIndex] && CheckTentative.Cost == Node_Next.Cost)
@@ -722,11 +737,16 @@ implementation{
                     		            		//This is where Neighbor is on neither Confirmed or Tentative list. So then store on Tentative List.
                                 			if (!inConfirmed && !inTentative)
                                 			{
+								//ImmediateNeighbor = 0;
                                 		        	//First, update the information needed to travel to that node 
 						               	Node_Next.Node_ID = Node_Next.AllNeighbors[NeighborIndex];
-                						Node_Next.Cost =  Node_Next.Cost + 1;
-                						Node_Next.Next = Destination;
-								//dbg(ROUTING_CHANNEL, "Tentative is going to be filled with Node_Next. Here are its Stats. Node_Next.Node_ID: %d, Node_Next.Cost: %d, Node_Next.Next:%d\n", Node_Next.Node_ID, Node_Next.Cost, Node_Next.Next);
+                						Node_Next.Cost =  Cost + 1;
+                						//for(ImmidiateNeighbor = 0; ImmidiateNeighbor < call NeighborStorage.size(); ImmidiateNeighbor++)
+								//{
+								//
+								//}
+								Node_Next.Next = Destination;
+								dbg(ROUTING_CHANNEL, "Tentative is going to be filled with Node_Next. Here are its Stats. Node_Next.Node_ID: %d, Node_Next.Cost: %d, Node_Next.Next:%d\n", Node_Next.Node_ID, Node_Next.Cost, Node_Next.Next);
 								call Tentative.pushfront(Node_Next);
                                				}
 		
@@ -813,19 +833,19 @@ implementation{
         	}
 	}
 
-	//dbg(ROUTING_CHANNEL, "Lets see what's the size of Tentative List... The size is %d \n", call Tentative.size());
-	//dbg(ROUTING_CHANNEL, "-----Tentative Contents----\n");
+	dbg(ROUTING_CHANNEL, "Lets see what's the size of Tentative List... The size is %d \n", call Tentative.size());
+	dbg(ROUTING_CHANNEL, "-----Tentative Contents----\n");
 	for(TentativeIndex = 0; TentativeIndex < call Tentative.size(); TentativeIndex++)
         {
 		CheckTentative = call Tentative.get(TentativeIndex);
-		//dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d \n", CheckTentative.Node_ID,  CheckTentative.Cost,  CheckTentative.Next);
+		dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d Index: %d \n", CheckTentative.Node_ID,  CheckTentative.Cost,  CheckTentative.Next, TentativeIndex);
 	}
 
-	//dbg(ROUTING_CHANNEL, "-----Confirmed Contents----\n");
+	dbg(ROUTING_CHANNEL, "-----Confirmed Contents----\n");
         for(CT_Index = 0; CT_Index < call ConfirmedTable.size(); CT_Index++)
         {
                 CheckConfirmed = call ConfirmedTable.get(CT_Index);
-                //dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d \n", CheckConfirmed.Node_ID,  CheckConfirmed.Cost,  CheckConfirmed.Next);
+                dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d \n", CheckConfirmed.Node_ID,  CheckConfirmed.Cost,  CheckConfirmed.Next);
         }
 
 	inConfirmed = FALSE;	
@@ -839,7 +859,11 @@ implementation{
 	{
 		
 		//dbg(ROUTING_CHANNEL, "We're going to attempt to remove an element in Tentative List when size = 1. Here's before size: %d\n", call Tentative.size());
-		CheaperTentative = call Tentative.removefromList(0);
+		//CheaperTentative = call Tentative.removefromList(0);
+		CheaperTentative = call Tentative.get(0);
+		call Tentative.popback();
+
+		
 		//dbg(ROUTING_CHANNEL, "Here's the size after we supposedly dropped an element in TentativeList when size was originally 1. After Size: %d\n", call Tentative.size());	
 		//dbg(ROUTING_CHANNEL, "Now that we dropped the last thing in Tentative, lets see if it's aleady in confirmed\n");
 		
@@ -851,7 +875,7 @@ implementation{
                        	if (CheaperTentative.Node_ID == CheckConfirmed.Node_ID)
                        	{
              		       	inConfirmed = TRUE;
-				//dbg(ROUTING_CHANNEL, "We ran into an instance where the last Tentative was in Confirmed and now we're gonna drop it...\n");
+				dbg(ROUTING_CHANNEL, "We ran into an instance where the last Tentative was in Confirmed and now we're gonna drop it...\n");
                        	}
                	}
 		
@@ -868,7 +892,7 @@ implementation{
 			//Assume the first is the cheaper tentative
 			CheaperTentative = call Tentative.get(0);
 			Cheaper_T_Index = 0;
-			//dbg(ROUTING_CHANNEL, "What is considered the first Cheaper Tentative is     Dest: %d, Cost: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost);
+			dbg(ROUTING_CHANNEL, "What is considered the first Cheaper Tentative is     Dest: %d, Cost: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost);
 			//Should be "<" because we're dealing with a potential size of TentativeList of 2, which translates to Index 1.
 			for(TentativeIndex = 1; TentativeIndex < call Tentative.size(); TentativeIndex++)
 			{
@@ -895,7 +919,7 @@ implementation{
                 		if (CheckTentative.Node_ID == CheckConfirmed.Node_ID)
 	                	{
         	        		inConfirmed = TRUE;
-                			//dbg(ROUTING_CHANNEL, "We ran into an instance where there was more than one Tentative in list, The shortest was in Confirmed and now we're gonna drop it...\n");
+                			dbg(ROUTING_CHANNEL, "We ran into an instance where there was more than one Tentative in list, The shortest was in Confirmed and now we're gonna drop it...\n");
                         	}
 	                }
 		
@@ -912,11 +936,13 @@ implementation{
 			}
 			else
 			{
-				CheaperTentative = call Tentative.removefromList(Cheaper_T_Index);
+				//CheaperTentative = call Tentative.removefromList(Cheaper_T_Index);
+				call Tentative.removefromList(Cheaper_T_Index);
+				call Tentative.popback();
 				//dbg(ROUTING_CHANNEL, "removefromList is used...\n");	
 			}
 			//call ConfirmedTable.pushfront(CheaperTentative);
-                	//dbg(ROUTING_CHANNEL, "What is considered the the final Cheaper Tentative?     Dest: %d, Cost: %d, Cheaper_T_Index: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost, Cheaper_T_Index);
+                	dbg(ROUTING_CHANNEL, "What is considered the the final Cheaper Tentative?     Dest: %d, Cost: %d, Cheaper_T_Index: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost, Cheaper_T_Index);
 			Dijkstra(CheaperTentative.Node_ID, CheaperTentative.Cost, CheaperTentative.Next);		
 		}
 	}	

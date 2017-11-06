@@ -144,11 +144,29 @@ def main():
     s.runTime(60);
     s.neighborDMP(2);
     s.runTime(40);
-    s.linkstateDMP(3);
+    s.linkstateDMP(1);
     s.runTime(40);
-    s.ping(2, 4, "Hello 2 to 4");
+    s.linkstateDMP(2);
     s.runTime(40);
-    s.routeDMP(2);
+    s.linkstateDMP(8);
+    s.runTime(40);
+    s.ping(1,9, "hello");
+    s.runTime(40);
+    s.ping(2,9, "hello");
+    s.runTime(40);
+    s.ping(3,9, "hello");
+    s.runTime(40);
+    s.ping(4,9, "hello");
+    s.runTime(40);
+    s.ping(5,9, "hello");
+    s.runTime(40);
+    s.ping(6,9, "hello");
+    s.runTime(40);
+    s.ping(7,9, "hello");
+    s.runTime(40);
+    s.ping(8,9, "hello");
+    s.runTime(40);
+    s.ping(9,9, "hello");
     s.runTime(40);
 if __name__ == '__main__':
     main()

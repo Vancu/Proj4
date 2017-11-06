@@ -103,12 +103,18 @@ implementation{
 	{
 		t temp;
 		uint16_t i = 0;
+		uint16_t sizeofthing = size;				//IF BUGGY, REMOVE IT
+		sizeofthing--;
 		temp = container[position];
-		for(i = 0; i < position; i++) {
-			container[i+1] = container[i];
-		}
-		container[0] = temp;
-		temp = call List.popfront();
+		//for(i = 0; i < position; i++) {
+		//	container[i+1] = container[i];
+		//}
+		//container[0] = temp;
+		container[position] = container[sizeofthing];		//If buggy, remove it
+		container[sizeofthing] = temp;
+		
+		//temp = call List.popfront();
+		//temp = call List.popback();				//IF BUGGY, REMOVE IT
 		return temp;
 	}
 }
