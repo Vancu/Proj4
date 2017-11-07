@@ -464,7 +464,7 @@ implementation{
 	
 	if(size == 0)
  	{
-		dbg(GENERAL_CHANNEL, "No Neighbors found in Node %d\n", TOS_NODE_ID);
+		//dbg(GENERAL_CHANNEL, "No Neighbors found in Node %d\n", TOS_NODE_ID);
 	}
 	
 	 else 
@@ -487,7 +487,7 @@ implementation{
 
         if(size == 0)
         {
-                dbg(GENERAL_CHANNEL, "No route found in Node %d\n", TOS_NODE_ID);
+                //dbg(GENERAL_CHANNEL, "No route found in Node %d\n", TOS_NODE_ID);
         	//Dijkstra(TOS_NODE_ID, 0, 0);
 	}
 
@@ -661,8 +661,8 @@ implementation{
 		//dbg(ROUTING_CHANNEL, "Node: %d Has successfully sent out an LSP Packet! \n", TOS_NODE_ID);
 	}
 
-	else
-		dbg(ROUTING_CHANNEL, "Node: %d currently has no neighbors! \n", TOS_NODE_ID);
+	//else
+		//dbg(ROUTING_CHANNEL, "Node: %d currently has no neighbors! \n", TOS_NODE_ID);
 
    }
 
