@@ -10,9 +10,11 @@ from CommandMsg import *
 class TestSim:
     # COMMAND TYPES
     CMD_PING = 0
-    CMD_LINKSTATE_DUMP = 2
     CMD_NEIGHBOR_DUMP = 1
-    CMD_ROUTE_DUMP=3
+    CMD_LINKSTATE_DUMP = 2
+    CMD_ROUTE_DUMP = 3
+    CMD_TEST_CLIENT = 4
+    CMD_TEST_SERVER = 5
 
     # CHANNELS - see includes/channels.h
     COMMAND_CHANNEL="command";
@@ -124,6 +126,12 @@ class TestSim:
     def linkstateDMP(self, destination):
 	self.sendCMD(self.CMD_LINKSTATE_DUMP, destination, "print link_table command"); 
    
+    def testClient(self, source, destination, srcPort, destPort, transfer):
+        self.sendCMD(self.CMD_TEST_CLIENT, source, "{0}{1}{2}{3}".format(chr(destination),chr(srcPort),chr(destPort),transfer));
+
+    def testServer(self, destination, port):
+        self.sendCMD(self.CMD_TEST_SERVER, destination, chr(port));
+    
     def addChannel(self, channelName, out=sys.stdout):
         print 'Adding Channel', channelName;
         self.t.addChannel(channelName, out);
@@ -131,7 +139,7 @@ class TestSim:
 def main():
     s = TestSim();
     s.runTime(10);
-    s.loadTopo("test.topo");
+    s.loadTopo("example.topo");
     s.loadNoise("no_noise.txt");
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
@@ -139,16 +147,32 @@ def main():
     s.addChannel(s.NEIGHBOR_CHANNEL);
     s.addChannel(s.FLOODING_CHANNEL);
     s.addChannel(s.ROUTING_CHANNEL);
-
+    s.addChannel(s.TRANSPORT_CHANNEL);
     
-    s.runTime(500);
-    s.neighborDMP(80);
+    s.runTime(60);
+    #s.neighborDMP(8);
+    #s.runTime(40);
+    #s.linkstateDMP(8);
+    #s.runTime(40);
+    #s.ping(8,2, "hello 8 to 2");
+    #s.runTime(40);
+    #s.routeDMP(8);
+    #s.runTime(40);
+
+# Test out Project 3
+    s.testServer(2, 80);
     s.runTime(40);
-    s.linkstateDMP(80);
+    s.testServer(5, 80);
     s.runTime(40);
-    s.ping(80,20, "hello 80 to 20");
+    s.testServer(4, 60);
     s.runTime(40);
-    s.routeDMP(80);
+    s.testServer(2, 81);
+    s.runTime(40);
+    s.testServer(2, 82);
+    s.runTime(40);
+    s.testServer(2, 83);
+    s.runTime(40);
+    s.testClient(3, 9, 70, 80, 4);
     s.runTime(40);
 if __name__ == '__main__':
     main()

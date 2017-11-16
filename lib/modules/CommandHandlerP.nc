@@ -42,7 +42,7 @@ implementation{
 
             dbg(COMMAND_CHANNEL, "A Command has been Issued.\n");
             buff = (uint8_t*) msg->payload;
-            commandID = msg->id;
+	    commandID = msg->id;
 
             //Find out which command was called and call related command
             switch(commandID){
@@ -69,13 +69,13 @@ implementation{
                 break;
 
             case CMD_TEST_CLIENT:
-                dbg(COMMAND_CHANNEL, "Command Type: Client\n");
-                signal CommandHandler.setTestClient();
+                dbg(COMMAND_CHANNEL, "Command Type: Test_Client\n");
+                signal CommandHandler.setTestClient(buff[0], buff[1], buff[2], buff[3]);
                 break;
 
             case CMD_TEST_SERVER:
-                dbg(COMMAND_CHANNEL, "Command Type: Client\n");
-                signal CommandHandler.setTestServer();
+                dbg(COMMAND_CHANNEL, "Command Type: Test_Server\n");
+                signal CommandHandler.setTestServer(buff[0]);
                 break;
 
             default:

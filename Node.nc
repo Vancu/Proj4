@@ -12,7 +12,7 @@
 #include "includes/CommandMsg.h"
 #include "includes/sendInfo.h"
 #include "includes/channels.h"
-//#include "includes/LSP.h"
+#include "includes/socket.h"
 //Struct for Neighbor which houses NODE ID AND NumofPings
 typedef nx_struct LinkedNeighbor {
 	//Node ID and Number of Pings is Stored. This is how we determine the age of the neighbor
@@ -56,16 +56,18 @@ module Node{
    uses interface List<RoutedTable  > as RoutedTableStorage;
    uses interface List<RoutedTable  > as Tentative;
    uses interface List<RoutedTable  > as ConfirmedTable;
+   uses interface List<socket_store_t> as SocketState;
+   uses interface Transport;
 }
 
 //These are stored in each node
 implementation{
    pack sendPackage;
    uint16_t sequence = 0;
-   //uint16_t CostCount = 0;
    uint16_t LSP_Limit = 0;
    bool Route_LSP_STOP = FALSE;
-   //bool SentPing = FALSE; 
+   socket_t socket;
+   
    // Prototypes (aka function definitions that are exclusively in this implimentation
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
@@ -231,37 +233,6 @@ implementation{
 				//dbg(ROUTING_CHANNEL, "We''re going to insert PartialTable into list of RoundTableStorage...\n");
 				call RoutedTableStorage.pushfront(PartialTable);
 				
-				//dbg(ROUTING_CHANNEL, "Payload_Array_Length is... %d  ...\n", Payload_Array_Length);
-				
-				//Here we check to see if we have a smaller cost to reach node, we replace the cost if we do.
-				//for(i = 0; i < Payload_Array_Length; i++)
-				//{
-				//	for (k = 0; k < call RoutedTableStorage.size(); k++)
-				//	{
-				//		temp = call RoutedTableStorage.get(k);
-				//		if (myMsg->payload[i] == temp.Node_ID)
-				//		{
-				//			if (temp.Cost > MAX_TTL - myMsg->TTL)
-				//			{
-								//temp.Cost = MAX_TTL - myMsg->TTL;
-								//RoutedTable editLinkedCost;
-				//				dbg(ROUTING_CHANNEL, "Supposedly Node %d found an shorter route and going to replace it because the cost is lower\n", TOS_NODE_ID);
-				//				dbg(ROUTING_CHANNEL, "-----STATS---- temp.Node_ID: %d, temp.Cost: %d, MAX_TTL - myMsg->TTL: %d \n", temp.Node_ID, temp.Cost, MAX_TTL - myMsg->TTL);
-				//				editLinkedCost = call RoutedTableStorage.removefromList(k);
-                		//				editLinkedCost.Cost =  MAX_TTL - myMsg->TTL;
-                						//dbg(ROUTING_CHANNEL, "Here's the size after we supposedly dropped an element in TentativeList when size was originally 1. After Size: %d\n", call Tentative.size());
-				//		                call RoutedTableStorage.pushfront(editLinkedCost);
-				//				break;
-				//				break;
-								//removedLinked = MAX_TTL - myMsg;
-								//call 
-								//k--;
-                        			        	
-				//			}
-				//		}				
-				//	}
-				//}
-				//sequence++;
 				makePack(&ForwardedNeighborRoute, myMsg->src, AM_BROADCAST_ADDR, myMsg->TTL - 1, PROTOCOL_LINKSTATE, myMsg->seq, (uint8_t*) myMsg->payload, (uint8_t) sizeof(myMsg->payload));
                 		pushPack(ForwardedNeighborRoute);
                 		call Sender.send(ForwardedNeighborRoute, AM_BROADCAST_ADDR);
@@ -391,14 +362,18 @@ implementation{
 		//sequence++;
 	}
 
-
+	else if (myMsg->dest == TOS_NODE_ID && myMsg->protocol == PROTOCOL_TCP)
+	{
+		dbg(FLOODING_CHANNEL, "Received packet, UNSURE if meant for it as it has protocol_TCP. Here's it's stats. TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
+	}
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
 	else
 	{
 		uint8_t i;
 		RoutedTable calculatedTable;
 		//dbg(FLOODING_CHANNEL, "Recieved packet, It's not for it... TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
-		//dbg(FLOODING_CHANNEL, "Size of ConfirmedTable is %d\n", call ConfirmedTable.size());
+		if (myMsg->protocol == PROTOCOL_TCP)
+			dbg(FLOODING_CHANNEL, "Received packet, not meant for it. It's protocol is TCP\n");
 	        makePack(&sendPackage, myMsg->src, myMsg->dest, myMsg->TTL--, myMsg->protocol, myMsg->seq, ((uint8_t *)myMsg-> payload), PACKET_MAX_PAYLOAD_SIZE);
                 pushPack(sendPackage);
 		for(i = 0; i < call ConfirmedTable.size(); i++)
@@ -525,14 +500,53 @@ implementation{
 
 }
 
-   event void CommandHandler.printDistanceVector()
-{
-  
-}
+   event void CommandHandler.printDistanceVector(){}
 
-   event void CommandHandler.setTestServer(){}
+   event void CommandHandler.setTestServer(uint8_t port)
+   {
+	socket_addr_t ServerAddr;
+	ServerAddr.addr = TOS_NODE_ID;
+	ServerAddr.port = port;
+	dbg(TRANSPORT_CHANNEL, "We're gonna try to bind Node: %d with Port: %d \n", TOS_NODE_ID, port);
+	socket = call Transport.socket();
+	
+	//There's at least room in the Socket to bind Serversocket to current node
+	//This would be false is there's no more room
+	if (socket >= 0)
+	{
+		dbg(GENERAL_CHANNEL, "Now lets try printing a thing that's in socket... Number for FD is %d\n", socket);
+   		call Transport.bind(socket, &ServerAddr);
+		call Transport.listen(socket);
+   	}
+   }
 
-   event void CommandHandler.setTestClient(){}
+   event void CommandHandler.setTestClient(uint8_t dest, uint8_t srcPort, uint8_t destPort, uint16_t transfer)
+   {
+	pack SynCLient;
+	socket_store_t SynchroPacket;
+   	RoutedTable calculatedTable;
+	uint8_t i;
+	socket_addr_t ClientAddr, ServerAddr;
+	SynchroPacket.flag = call Random.rand16() % 50;
+        ClientAddr.addr = TOS_NODE_ID;
+        ClientAddr.port = srcPort;
+        dbg(GENERAL_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
+        socket = call Transport.socket();
+        
+        //There's at least room in the Socket to bind Clientsocket to SocketAddress
+        //This would be false is there's no more room
+        if (socket >= 0)
+        {
+		dbg(GENERAL_CHANNEL, "Now lets try printing a thing that's in socket... Number for FD is %d\n", socket);
+        	call Transport.bind(socket, &ClientAddr);
+
+		ServerAddr.addr = dest;
+		ServerAddr.port = destPort;
+
+		call Transport.connect(socket,&ServerAddr);
+   	}
+
+   }
 
 
    event void CommandHandler.setAppServer(){}
@@ -547,6 +561,7 @@ implementation{
       Package->protocol = protocol;
       memcpy(Package->payload, payload, length);   
       }
+
 
    //This searchPack is specific to a single node. This is also enabling for when this node recieves the same packet from a different 
    bool DupliPack (pack *Package)
@@ -678,7 +693,7 @@ implementation{
 	NeighborIndex = 0;
         call ConfirmedTable.pushfront(NewConfirmed);
 	
-	dbg(ROUTING_CHANNEL, "We've started after defining everything at the top. Destination: %d \n", Destination);
+	//dbg(ROUTING_CHANNEL, "We've started after defining everything at the top. Destination: %d \n", Destination);
 	
 	//Check to see if we're in the initial start of contructing routing table. The beginning starts at TOS_NODE_ID
 	//If we're not, then we need to aquire the neighbors of the current NewConfirmed.Node_ID so we can look through it's LSP
@@ -722,7 +737,7 @@ implementation{
                                                         				//We found a cost that on Tentative List that's less than what it would cost for the neighbor.
                                                         				//Replace entry by first removing that index from the list, then push the cheaper cost and NextHop with it.
 	
-        	                                                			dbg(ROUTING_CHANNEL, "Here, we do the thing where we found a cheaper Tentative path and replace it. \n", Destination);
+        	                                                			//dbg(ROUTING_CHANNEL, "Here, we do the thing where we found a cheaper Tentative path and replace it. \n", Destination);
                 	                                        			//CheaperTentative = call Tentative.removefromList(TentativeIndex);
 											//CheaperTentative.Cost = Node_Next.Cost + 1;
                                 	                        			//CheaperTentative.Next = Destination;
@@ -762,7 +777,7 @@ implementation{
 								//
 								//}
 								Node_Next.Next = Destination;
-								dbg(ROUTING_CHANNEL, "Tentative is going to be filled with Node_Next. Here are its Stats. Node_Next.Node_ID: %d, Node_Next.Cost: %d, Node_Next.Next:%d\n", Node_Next.Node_ID, Node_Next.Cost, Node_Next.Next);
+								//dbg(ROUTING_CHANNEL, "Tentative is going to be filled with Node_Next. Here are its Stats. Node_Next.Node_ID: %d, Node_Next.Cost: %d, Node_Next.Next:%d\n", Node_Next.Node_ID, Node_Next.Cost, Node_Next.Next);
 								call Tentative.pushfront(Node_Next);
                                				}
 		
@@ -849,19 +864,19 @@ implementation{
         	}
 	}
 
-	dbg(ROUTING_CHANNEL, "Lets see what's the size of Tentative List... The size is %d \n", call Tentative.size());
-	dbg(ROUTING_CHANNEL, "-----Tentative Contents----\n");
+	//dbg(ROUTING_CHANNEL, "Lets see what's the size of Tentative List... The size is %d \n", call Tentative.size());
+	//dbg(ROUTING_CHANNEL, "-----Tentative Contents----\n");
 	for(TentativeIndex = 0; TentativeIndex < call Tentative.size(); TentativeIndex++)
         {
 		CheckTentative = call Tentative.get(TentativeIndex);
-		dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d Index: %d \n", CheckTentative.Node_ID,  CheckTentative.Cost,  CheckTentative.Next, TentativeIndex);
+		//dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d Index: %d \n", CheckTentative.Node_ID,  CheckTentative.Cost,  CheckTentative.Next, TentativeIndex);
 	}
 
-	dbg(ROUTING_CHANNEL, "-----Confirmed Contents----\n");
+	//dbg(ROUTING_CHANNEL, "-----Confirmed Contents----\n");
         for(CT_Index = 0; CT_Index < call ConfirmedTable.size(); CT_Index++)
         {
                 CheckConfirmed = call ConfirmedTable.get(CT_Index);
-                dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d \n", CheckConfirmed.Node_ID,  CheckConfirmed.Cost,  CheckConfirmed.Next);
+                //dbg(ROUTING_CHANNEL, "Dest: %d, Cost: %d, Next: %d \n", CheckConfirmed.Node_ID,  CheckConfirmed.Cost,  CheckConfirmed.Next);
         }
 
 	inConfirmed = FALSE;	
@@ -891,7 +906,7 @@ implementation{
                        	if (CheaperTentative.Node_ID == CheckConfirmed.Node_ID)
                        	{
              		       	inConfirmed = TRUE;
-				dbg(ROUTING_CHANNEL, "We ran into an instance where the last Tentative was in Confirmed and now we're gonna drop it...\n");
+				//dbg(ROUTING_CHANNEL, "We ran into an instance where the last Tentative was in Confirmed and now we're gonna drop it...\n");
                        	}
 		
 			if(!inConfirmed)	
@@ -899,7 +914,7 @@ implementation{
 				//THE FOLLOWING FOR LOOP IS BUGGY, PLEASE CHECK CAREFULLY
 				if (CheaperTentative.Next == CheckConfirmed.Node_ID)
 				{
-					dbg(ROUTING_CHANNEL, "We fucking found where the last Tentative's Next is in Confirmed's Node_ID. We should perhaps was look into changing Next...\n");
+					//dbg(ROUTING_CHANNEL, "We fucking found where the last Tentative's Next is in Confirmed's Node_ID. We should perhaps was look into changing Next...\n");
 					CheaperTentative.Next = CheckConfirmed.Next;
 				
 					//SO GO CHECK IF THE NODE_ID CONNECTS TO IMMEDIATE NEIGHBORS	
@@ -908,7 +923,7 @@ implementation{
 						Next_Neighbor = call NeighborStorage.get(NeighborIndex);
 						if (CheaperTentative.Next == Next_Neighbor.Node_ID)
 						{
-							dbg(ROUTING_CHANNEL, "We Theoretically found the 3rd? hop for next neighbor. 4 May still be buggy but it's not recursive atm...\n");
+							//dbg(ROUTING_CHANNEL, "We Theoretically found the 3rd? hop for next neighbor. 4 May still be buggy but it's not recursive atm...\n");
 							break;
 						}	
 					}
@@ -930,7 +945,7 @@ implementation{
 			//Assume the first is the cheaper tentative
 			CheaperTentative = call Tentative.get(0);
 			Cheaper_T_Index = 0;
-			dbg(ROUTING_CHANNEL, "What is considered the first Cheaper Tentative is     Dest: %d, Cost: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost);
+			//dbg(ROUTING_CHANNEL, "What is considered the first Cheaper Tentative is     Dest: %d, Cost: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost);
 			//Should be "<" because we're dealing with a potential size of TentativeList of 2, which translates to Index 1.
 			for(TentativeIndex = 1; TentativeIndex < call Tentative.size(); TentativeIndex++)
 			{
@@ -957,7 +972,7 @@ implementation{
                 		if (CheckTentative.Node_ID == CheckConfirmed.Node_ID)
 	                	{
         	        		inConfirmed = TRUE;
-                			dbg(ROUTING_CHANNEL, "We ran into an instance where there was more than one Tentative in list, The shortest was in Confirmed and now we're gonna drop it...\n");
+                			//dbg(ROUTING_CHANNEL, "We ran into an instance where there was more than one Tentative in list, The shortest was in Confirmed and now we're gonna drop it...\n");
                         	}
 
 	                        //THE FOLLOWING FOR LOOP IS A COPY OF ABOVE AND MAY ALSO BE BUGGY, PLEASE CHECK CAREFULLY
@@ -967,7 +982,7 @@ implementation{
                                 	//CHECKTENTATIVE WAS CHANGED AS APOSED TO CHEAPERTENTATIVE
 	                                if (CheaperTentative.Next == CheckConfirmed.Node_ID)
         	                        {
-                	                        dbg(ROUTING_CHANNEL, "DIFFERENT MESSAGE where the last Tentative's Next is in Confirmed's Node_ID. We should perhaps was look into changing Next...\n");
+                	                        //dbg(ROUTING_CHANNEL, "DIFFERENT MESSAGE where the last Tentative's Next is in Confirmed's Node_ID. We should perhaps was look into changing Next...\n");
 	                        	        CheaperTentative.Next = CheckConfirmed.Next;
 	
 		                               //SO GO CHECK IF THE NODE_ID CONNECTS TO IMMEDIATE NEIGHBORS
@@ -976,7 +991,7 @@ implementation{
                        		                        Next_Neighbor = call NeighborStorage.get(NeighborIndex);
                                		                if (CheaperTentative.Next == Next_Neighbor.Node_ID)
                                        		        {
-                                               		        dbg(ROUTING_CHANNEL, "We Theoretically found A THING? Size is more than 2, change Next and should be pushed?...\n");
+                                               		        //dbg(ROUTING_CHANNEL, "We Theoretically found A THING? Size is more than 2, change Next and should be pushed?...\n");
                                                        		break;
 	  	                                        }
         	                                }
@@ -1007,7 +1022,7 @@ implementation{
 				//dbg(ROUTING_CHANNEL, "removefromList is used...\n");	
 			}
 			//call ConfirmedTable.pushfront(CheaperTentative);
-                	dbg(ROUTING_CHANNEL, "What is considered the the final Cheaper Tentative?     Dest: %d, Cost: %d, Cheaper_T_Index: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost, Cheaper_T_Index);
+                	//dbg(ROUTING_CHANNEL, "What is considered the the final Cheaper Tentative?     Dest: %d, Cost: %d, Cheaper_T_Index: %d\n",CheaperTentative.Node_ID, CheaperTentative.Cost, Cheaper_T_Index);
 			Dijkstra(CheaperTentative.Node_ID, CheaperTentative.Cost, CheaperTentative.Next);		
 		}
 	}	

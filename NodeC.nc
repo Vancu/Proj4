@@ -10,6 +10,7 @@
 #include <Timer.h>
 #include "includes/CommandMsg.h"
 #include "includes/packet.h"
+#include "includes/socket.h"
 
 configuration NodeC{
 }
@@ -58,4 +59,12 @@ implementation {
 
     components new ListC(RoutedTable, 32) as ConfirmedTableC;
     Node.ConfirmedTable-> ConfirmedTableC;
+
+    components new ListC(socket_store_t, 32) as SocketStateC;
+    Node.SocketState-> SocketStateC;    
+    
+    components TransportC;
+    Node.Transport->TransportC;
+    TransportC.ConfirmedTableC->ConfirmedTableC;
+    TransportC.SocketsC->SocketStateC;
 }
