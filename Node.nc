@@ -33,7 +33,7 @@ typedef nx_struct RoutedTable {
 module Node{
    uses interface Boot;
    uses interface Timer<TMilli> as periodicTimer; //Interface that was wired above.
-   
+   uses interface LocalTime<TMilli>;
    //uses interface Timer<TMilli> as LSP_Timer; //Interface that was wired above.
    //List of packs to store the info of identified packets, along if we've seen it or not  
    uses interface List<pack> as PacketStorage;   
@@ -57,6 +57,7 @@ module Node{
    uses interface List<RoutedTable  > as Tentative;
    uses interface List<RoutedTable  > as ConfirmedTable;
    uses interface List<socket_store_t> as SocketState;
+   uses interface List<socket_store_t> as Modify_The_States; 
    uses interface Transport;
 }
 
@@ -68,6 +69,11 @@ implementation{
    bool Route_LSP_STOP = FALSE;
    socket_t socket;
    
+   //This is for recording the instance of time where we make the packet that's going to be sent to Server. This is used in conjunction of TimeReceived for when server node
+   //Receives it to calculate one half of RTT.
+   uint16_t TimeSent;
+   uint16_t TimeReceied;
+
    // Prototypes (aka function definitions that are exclusively in this implimentation
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
@@ -364,10 +370,97 @@ implementation{
 
 	else if (myMsg->dest == TOS_NODE_ID && myMsg->protocol == PROTOCOL_TCP)
 	{
+		socket_store_t* ClientSocketPack;
+    		socket_addr_t Client_AddrPort;
+		
+		ClientSocketPack = myMsg->payload;
+		Client_AddrPort = ClientSocketPack->dest;
 		//Now we should check to see if we can establish a connection between the source and destination
-		dbg(FLOODING_CHANNEL, "Received packet, It meant for it as it has protocol_TCP. Here's it's stats. TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
-		//dbg(FLOODING_CHANNEL, "For curiocity's sake, lets try and print out payload: %d\n", myMsg->payload);
-	}
+		dbg(TRANSPORT_CHANNEL, "Received packet with protocol_TCP. Here's it's stats of payload.  Addr: %d,    Port: %d  Flag is: %d\n", Client_AddrPort.addr, Client_AddrPort.port, ClientSocketPack->flag);
+		if (ClientSocketPack->flag == 1)
+		{
+	                //You theoretically are supposed to check to see if
+                        //It's working so make an SYN + ACK Packet
+		        uint8_t i;
+        		RoutedTable calculatedTable;
+        		socket_store_t PullfromList;
+        		pack SynchroPacket;
+			uint8_t Next;
+			for(i = 0; i < call SocketState.size(); i++)
+			{	
+				PullfromList = call SocketState.get(i);
+				if(Client_AddrPort.port == PullfromList.src && PullfromList.state == LISTEN && Client_AddrPort.addr == TOS_NODE_ID)
+				{
+					uint8_t CTableIndex;
+					socket_store_t SocketFlag;
+			                socket_store_t BindSocket;
+                                        socket_addr_t Address_Bind;
+                                        bool Modified = FALSE;
+		        
+			                SocketFlag = call SocketState.get(i);
+        		                //FLAG IS FOR SYN+ACK
+        		                SocketFlag.flag = 2;
+                		        SocketFlag.dest.port = ClientSocketPack->src;
+                		        SocketFlag.dest.addr = myMsg->src;
+                		        
+					SynchroPacket.src = TOS_NODE_ID;
+                		        SynchroPacket.dest = myMsg->src;
+                		        SynchroPacket.seq = myMsg->seq + 1;
+                		        SynchroPacket.TTL = MAX_TTL;
+                		        SynchroPacket.protocol = PROTOCOL_TCP;
+                		        //SynchroPacket.payload = port;
+                		        memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+                 			for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+                        		{       
+                                
+                                		calculatedTable = call ConfirmedTable.get(CTableIndex);
+                                		if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                		{
+                                        		Next = calculatedTable.Next;
+                                        		break;
+                                		}
+                        		}
+					
+					//Now that we've sent the packet, we gotta change the State from LISTEN TO SYN_RCVD
+					
+        				//What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
+        				//if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
+        				//Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
+        				while (!call SocketState.isEmpty())
+        				{
+				                BindSocket = call SocketState.front();
+                				call SocketState.popfront();
+			             		//Modify_The_States
+			                	if (BindSocket.fd == i && !Modified)
+                				{
+                        				enum socket_state ChangeState;
+                        				ChangeState = SYN_RCVD;
+                        				BindSocket.state = ChangeState;
+                        				Modified = TRUE;
+                        				dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Change state to SYN_RCVD in port: %d\n", BindSocket.src);
+                        				call Modify_The_States.pushfront(BindSocket);
+
+                				}
+						
+						else
+                        				call Modify_The_States.pushfront(BindSocket);						
+					}
+
+				        while (!call Modify_The_States.isEmpty())
+        				{
+                				call SocketState.pushfront(call Modify_The_States.front());
+                				call Modify_The_States.popfront();
+        				}	
+				}
+				call Sender.send(SynchroPacket, Next);
+			}
+		}
+		
+		else if (ClientSocketPack->flag == 2)
+                {
+			dbg(TRANSPORT_CHANNEL, "Received a SYN+ACK flag, Change state from SYN_RCVD to Established\n");	
+		}
+	}	
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
 	else
 	{
@@ -530,22 +623,23 @@ implementation{
 	socket_addr_t ClientAddr, ServerAddr;
         ClientAddr.addr = TOS_NODE_ID;
         ClientAddr.port = srcPort;
-        dbg(GENERAL_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
+        dbg(TRANSPORT_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
         socket = call Transport.socket();
         
         //There's at least room in the Socket to bind Clientsocket to SocketAddress
         //This would be false is there's no more room
         if (socket >= 0)
         {
-		dbg(GENERAL_CHANNEL, "Now lets try printing a thing that's in socket... Number for FD is %d\n", socket);
-        	call Transport.bind(socket, &ClientAddr);
-
-		ServerAddr.addr = dest;
-		ServerAddr.port = destPort;
-
-		call Transport.connect(socket,&ServerAddr);
-   	}
-
+		dbg(TRANSPORT_CHANNEL, "Now lets try printing a thing that's in socket... Number for FD is %d\n", socket);
+        	if (call Transport.bind(socket, &ClientAddr) == SUCCESS)
+		{
+			ServerAddr.addr = dest;
+			ServerAddr.port = destPort;
+			TimeSent = call LocalTime.get();
+			dbg(TRANSPORT_CHANNEL, "I just called a LocalTime.get() function. Print that out: %d\n", TimeSent);
+			call Transport.connect(socket,&ServerAddr);
+   		}
+	}
    }
 
    event void CommandHandler.ClientClose(uint8_t ClientAddress, uint8_t srcPort, uint8_t destPort, uint8_t dest){}

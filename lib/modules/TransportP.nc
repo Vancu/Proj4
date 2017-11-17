@@ -29,7 +29,7 @@ implementation{
    error_t ChangeVal(socket_t fd, socket_addr_t *addr, uint8_t flag);
 
    //Here, we want to check for a flag or other data in our list. Here's our function to do that
-   error_t ReadVal(socket_t fd);
+   error_t ReadVal(socket_t fd, uint8_t flag);
 
 
    //This searchPack is specific to a single node. This is also enabling for when this node recieves the same packet from a different
@@ -52,9 +52,9 @@ implementation{
                 {
                         Address_Bind.port = addr->port;
                         Address_Bind.addr = addr->addr;
-                        BindSocket.dest = Address_Bind;
+                        BindSocket.src = Address_Bind.port;
                         Modified = TRUE;
-                        dbg(TRANSPORT_CHANNEL, "fd found with flag BIND, inserting addr of node %d to port %d\n", Address_Bind.addr, Address_Bind.port);
+                        dbg(TRANSPORT_CHANNEL, "fd found with flag BIND, binding node %d to port %d\n", addr->addr, addr->port);
                         call Modify_The_States.pushfront(BindSocket);
                 }
 		
@@ -65,7 +65,7 @@ implementation{
                         ChangeState = LISTEN;
                         BindSocket.state = ChangeState;
                         Modified = TRUE;
-                        dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Also changing the state to LISTEN in addr: %d (same as TOS_NODE_ID) Assume that the port reported above is true\n", TOS_NODE_ID);
+                        dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Also changing the state to LISTEN in port: %d (same as TOS_NODE_ID) Assume that the port reported above is true\n", BindSocket.src);
                         call Modify_The_States.pushfront(BindSocket);
 
 		}
@@ -107,15 +107,6 @@ implementation{
                 call Modify_The_States.popfront();
         }
 
-        i = 0;
-        while (i < call Sockets.size())
-        {
-                BindSocket = call Sockets.get(i);
-                if (!BindSocket.used)
-                        break;
-                dbg(TRANSPORT_CHANNEL, "We're going to attempt to print out addr of Index: %d.  Addr: %d with port: %d\n", i, BindSocket.dest.addr, BindSocket.dest.port);
-                i++;
-        }
         if (Modified)
                 return SUCCESS;
 
@@ -123,7 +114,7 @@ implementation{
                 return FAIL;
    }
 
-   error_t ReadVal(socket_t fd)
+   error_t ReadVal(socket_t fd, uint8_t flag)
    {
    	uint8_t i;
    	socket_store_t BindSocket;
@@ -131,12 +122,20 @@ implementation{
         while (i < call Sockets.size())
         {
 		BindSocket = call Sockets.get(i);
-   		//This is for Accept;
-   		if  (BindSocket.fd == fd  && BindSocket.state == LISTEN)
+   		
+		//Flag 1 = Accept;
+   		if  (BindSocket.fd == fd && flag == 1 && BindSocket.state == LISTEN)
    		{       
    			SocketIndex = fd;
         		return SUCCESS;                
    		}
+
+		//Flag 2 = Used in Read part of TransportP
+		else if (BindSocket.fd == fd && flag == 2)
+		{
+			SocketIndex = fd;
+                        return SUCCESS;
+		}
 	}
 
 	//Wasn't able to find the fd or the fd's state wasn't LISTEN
@@ -146,7 +145,7 @@ implementation{
     {
 	//socket_t fd;
     	socket_store_t CheckSocket;
-	dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
+	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
 	
 	if (call Sockets.size() < MAX_NUM_OF_SOCKETS)
 	{
@@ -159,7 +158,7 @@ implementation{
 		CheckSocket.lastWritten = 0;
 		CheckSocket.lastRcvd = 0;
 		CheckSocket.nextExpected = 0;
-		CheckSocket.effectiveWindow = 1;
+		CheckSocket.effectiveWindow = SOCKET_BUFFER_SIZE;
 		call Sockets.pushback(CheckSocket);
 		return CheckSocket.fd;
 	}
@@ -186,55 +185,22 @@ implementation{
 
    command error_t Transport.bind(socket_t fd, socket_addr_t *addr)
     {
-	return ChangeVal(fd, addr, 1);	
-/*	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
-*    	uint8_t i;
-*	socket_store_t BindSocket;
-*	socket_addr_t Address_Bind;
-*	bool Modified = FALSE;
-*
-*	//What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
-*	//if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just 
-*	//Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
-*	while (!call Sockets.isEmpty())
-*	{
-*		BindSocket = call Sockets.front();
-*		call Sockets.popfront();
-*		if (BindSocket.fd == fd && !Modified)
-*		{
-*			Address_Bind.port = addr->port;
-*			Address_Bind.addr = addr->addr;
-*			BindSocket.dest	= Address_Bind;
-*			Modified = TRUE;
-*			dbg(TRANSPORT_CHANNEL, "fd found, inserting addr of node %d to port %d\n", Address_Bind.addr, Address_Bind.port);
-*			call Modify_The_States.pushfront(BindSocket);
-*		} 
-*		
-*		else
-*			call Modify_The_States.pushfront(BindSocket);
-*		
-*	}
-*	
-*	while (!call Modify_The_States.isEmpty())
-*	{
-*		call Sockets.pushfront(call Modify_The_States.front());
-*		call Modify_The_States.popfront();
-*	}
-*		
-*	i = 0;
-*	while (!call Sockets.isEmpty())
-*	{
-*		BindSocket = call Sockets.get(i);
-*		if (!BindSocket.used)
-*			break;
-*		dbg(TRANSPORT_CHANNEL, "We're going to attempt to print out addr of Index: %d.  Addr: %d with port: %d\n", i, BindSocket.dest.addr, BindSocket.dest.port);
-*		i++;
-*	}	
-*	if (Modified)
-*		return SUCCESS;
-*
-*	else
-*/		return FAIL;
+	error_t BindFunc;
+	uint8_t i;
+	socket_store_t BindSocket;
+	BindFunc = ChangeVal(fd, addr, 1);
+	
+	i = 0;
+        while (i < call Sockets.size())
+        {
+                BindSocket = call Sockets.get(i);
+                if (!BindSocket.used)
+                        break;
+                dbg(TRANSPORT_CHANNEL, "We're going to attempt to print out all ports. Addr is Garbage if not assigned Index: %d.  Addr: %d with port: %d\n", i, BindSocket.dest, BindSocket.src);
+                i++;
+        }
+	
+	return BindFunc;	
     }
 
    /**
@@ -253,7 +219,7 @@ implementation{
    command socket_t Transport.accept(socket_t fd)
     {
         error_t CheckFD;
-	CheckFD = ReadVal(fd);	
+	CheckFD = ReadVal(fd, 1);	
     
 	if (CheckFD == SUCCESS)
 		return SocketIndex;
@@ -323,8 +289,100 @@ implementation{
 
    command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen)
    {
-   
-   }
+   	socket_store_t WriteSocket, EditedSocket;
+	error_t CheckFD;
+	uint8_t BufferSize, BufferIndex, i;
+        bool Modified = FALSE;
+	
+        //After this, we're done transfering the contents from bug to Server's receivedBuff, now go ahead and and push those changes into the list
+        //Reason why I'm not sending to the function defined above is because we are required to write from buffer sent from this function.
+        //It would be redundant to overload the function
+        //WE ARE ALSO IN AN INDEX SOMEWHERE, WE'RE NOT STARTING AT FRONT
+        while (!call Sockets.isEmpty())
+       	{
+        	WriteSocket = call Sockets.front();
+                call Sockets.popfront();
+                if (WriteSocket.fd == fd && !Modified)
+                {
+                	WriteSocket = call Sockets.get(fd);
+                	//Check to see if the size of buffer (data we plan on writing) is more than the "effective window" of that socket
+                	//Drop the packet if this is the case;
+                	if (WriteSocket.effectiveWindow < bufflen)
+                	{
+                	        //Drop for now?
+                	        //return 0;
+                	}
+
+                	//This means we have enough space to write into the buffer
+                	//You start with that Socket's (Server's) next expected and move(write) content from buff to recieved buffer
+                	else
+                	{
+                	      	BufferIndex = WriteSocket.nextExpected;
+                	      	
+				//Begin to write data from buff onto Server's Received buff
+                 	      	for(i = 0; i < bufflen; i++)
+                  	      	{
+                              		WriteSocket.rcvdBuff[BufferIndex] = buff[i];
+                              		BufferIndex++;
+                        	}
+				
+				WriteSocket.rcvdBuff;
+                        
+	                        //Now that we've writen content to the rcvdBuff, change the effective Window
+        	                WriteSocket.effectiveWindow = WriteSocket.effectiveWindow - bufflen;
+				dbg(TRANSPORT_CHANNEL, "Here, we successfully altered the RCVDBUFFER and the EffectiveWindow should theoretically be changed. Lets Print it: %d, \n", EditedSocket.effectiveWindow);
+                	}
+
+			//Whether or not we wrote to it or not, at least change bool Modified so that we're not going to edit any more sockets.
+                        Modified = TRUE;
+                        call Modify_The_States.pushfront(WriteSocket);
+               	}
+
+                else
+               		call Modify_The_States.pushfront(WriteSocket);
+
+       	}
+
+        while (!call Modify_The_States.isEmpty())
+        {
+        	call Sockets.pushfront(call Modify_The_States.front());
+                call Modify_The_States.popfront();
+        }	
+	
+/*	CheckFD = ReadVal(fd, 2);
+*	if (CheckFD = SUCCESS)
+*	{
+*		WriteSocket = call Sockets.get(SocketIndex);
+*		//Check to see if the size of buffer (data we plan on writing) is more than the "effective window" of that socket
+*		//Drop the packet if this is the case;
+*		if (WriteSocket.effectiveWindow < bufflen)
+*		{
+*			//Drop for now?
+*			return 0;	
+*		}
+*		
+*		//This means we have enough space to write into the buffer
+*		//You start with that Socket's (Server's) next expected and move(write) content from buff to recieved buffer 
+*		else
+*		{
+*			BufferIndex = WriteSocket.nextExpected;
+*			//Begin to write data from buff onto Server's Received buff 
+*			for(i = 0; i < bufflen; i++)
+*			{
+*				WriteSocket.rcvdBuff[BufferIndex] = buff[i];
+*				BufferIndex++;
+*			}
+*			
+*		}
+*      }
+*
+*
+*	else
+*	{
+*		//drop for now?
+*		return 0;
+*	}	
+*/   }
 
    /**
     * Attempts a connection to an address.
@@ -342,21 +400,27 @@ implementation{
    {
 	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
         error_t Push_into_List;
-	uint8_t i;
-	uint8_t port;
+	uint8_t i, initial_RTT;
+	//uint8_t port;
         RoutedTable calculatedTable;
-	//socket_store_t BindSocket;
+	socket_store_t SocketFlag;
         pack SynchroPacket;
 	//enum socket_state ChangeState;
         //bool Modified = FALSE;
 
-	port = addr->port;
+	SocketFlag = call Sockets.get(fd);
+	//FLAG IS FOR SYN
+	SocketFlag.flag = 1;
+	SocketFlag.dest.port = addr->port;
+	SocketFlag.dest.addr = addr->addr;
+	//port = addr->port;
 	SynchroPacket.src = TOS_NODE_ID;
 	SynchroPacket.dest = addr->addr;
 	SynchroPacket.seq = 1;
 	SynchroPacket.TTL = MAX_TTL;
 	SynchroPacket.protocol = PROTOCOL_TCP;
 	//SynchroPacket.payload = port;
+	memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));   
 	for(i = 0; i < call ConfirmedList.size(); i++)
         {
 
@@ -368,55 +432,7 @@ implementation{
                 }
         }
 	
-	//call Sender.send(SynchroPacket, addr->addr);
-
-	//We want to bind onto list, then afterwards we want to see if we can connect/
-	return Push_into_List = ChangeVal(fd, addr, 3);	
-/*        //What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
-*        //if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
- *       //Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
-  *      while (!call Sockets.isEmpty())
-   *     {
-    *            BindSocket = call Sockets.front();
-     *           call Sockets.popfront();
-      *          if (BindSocket.fd == fd && !Modified && BindSocket.state == LISTEN)
-       *         {
-        *                ChangeState = ESTABLISHED;
-         *               BindSocket.state = ChangeState;
-          *              Modified = TRUE;
-           *             //dbg(TRANSPORT_CHANNEL, "fd found, Also changing the state to LISTEN in addr: %d which is in port: %d\n", BindSocket.addr, BindSocket.port);
-            *            call Modify_The_States.pushfront(BindSocket);
-             *   }
-*
- *               else
-  *                      call Modify_The_States.pushfront(BindSocket);
-*
- *       }
-*
- *       while (!call Modify_The_States.isEmpty())
-  *      {
-   *             call Sockets.pushfront(call Modify_The_States.front());
-    *            call Modify_The_States.popfront();
-     *   }
-*
-*        i = 0;
- *       while (!call Sockets.isEmpty())
-  *      {
-   *             BindSocket = call Sockets.get(i);
-    *            if (!BindSocket.used)
-     *                   break;
-*
- *               if (BindSocket.state == ESTABLISHED)
-  *                      dbg(TRANSPORT_CHANNEL, "~~~~~~~HELLO~~~~~~~~ Index which has a changed from LISTEN to ESTABLISHED. Print out  Index: %d.  Addr: %d with port: %d\n", i, BindSocket.dest.addr, BindSocket.dest.port);
-   *             i++;
-    *    }
-     *   if (Modified)
-      *          return SUCCESS;
-
-       * else
-    *            return FAIL;
-   
-*/  }
+  }
 
    /**
     * Closes the socket.
@@ -460,55 +476,6 @@ implementation{
    {
 	socket_addr_t * addr;
 	return ChangeVal(fd, addr, 2);
-/*	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
-*       uint8_t i;
-*       socket_store_t BindSocket;
-*       enum socket_state ChangeState;
-*       bool Modified = FALSE;
-*
-*       //What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD 
-*       //if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
-*       //Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
-*        while (!call Sockets.isEmpty())
- *       {
-  *              BindSocket = call Sockets.front();
-   *             call Sockets.popfront();
-    *            if (BindSocket.fd == fd && !Modified)
-     *           {
-*			ChangeState = LISTEN;
- *                       BindSocket.state = ChangeState;
-  *                      Modified = TRUE;
-   *                     //dbg(TRANSPORT_CHANNEL, "fd found, Also changing the state to LISTEN in addr: %d which is in port: %d\n", BindSocket.addr, BindSocket.port);
-    *                    call Modify_The_States.pushfront(BindSocket);
-     *           }
-*
- *               else
-  *                      call Modify_The_States.pushfront(BindSocket);
-*
- *       }
-*
- *       while (!call Modify_The_States.isEmpty())
-  *      {
-   *             call Sockets.pushfront(call Modify_The_States.front());
-    *            call Modify_The_States.popfront();
-     *   }
-*
- *       i = 0;
-  *      while (!call Sockets.isEmpty())
-   *     {
-    *            BindSocket = call Sockets.get(i);
-     *           if (!BindSocket.used)
-      *                  break;
-       *         
-	*	if (BindSocket.state == LISTEN)
-	*		dbg(TRANSPORT_CHANNEL, "There should be no change except the index which has a changed to LISTEN. Print out  Index: %d.  Addr: %d with port: %d\n", i, BindSocket.dest.addr, BindSocket.dest.port);
-         *       i++;
-        *}
-       * if (Modified)
-        *        return SUCCESS;
-
-      *  else
-       *         return FAIL;
- */  }
+   }
 
 }

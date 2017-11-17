@@ -163,19 +163,19 @@ def main():
 #    s.runTime(40);
 
 # Test out Project 3
-    s.testServer(2, 80);
+    s.testServer(9, 80);
     s.runTime(40);
     s.testServer(5, 80);
     s.runTime(40);
     s.testServer(4, 60);
     s.runTime(40);
-    s.testServer(2, 81);
+    s.testServer(9, 81);
     s.runTime(40);
-    s.testServer(2, 82);
+    s.testServer(9, 82);
     s.runTime(40);
-    s.testServer(2, 83);
+    s.testServer(9, 83);
     s.runTime(40);
-    s.testClient(3, 2, 70, 82, 4);
+    s.testClient(3, 9, 70, 82, 4);
     s.runTime(40);
 if __name__ == '__main__':
     main()

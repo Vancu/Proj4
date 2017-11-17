@@ -32,6 +32,9 @@ implementation {
     components CommandHandlerC;
     Node.CommandHandler -> CommandHandlerC;
 
+    components LocalTimeMilliC;
+    Node.LocalTime -> LocalTimeMilliC;
+
     //Located in dataStructures under interfaces and modules folder
     components new ListC(pack, 32) as PacketStorageC;
     Node.PacketStorage-> PacketStorageC;
@@ -60,9 +63,12 @@ implementation {
     components new ListC(RoutedTable, 32) as ConfirmedTableC;
     Node.ConfirmedTable-> ConfirmedTableC;
 
-    components new ListC(socket_store_t, 32) as SocketStateC;
+    components new ListC(socket_store_t, 10) as SocketStateC;
     Node.SocketState-> SocketStateC;    
     
+    components new ListC(socket_store_t, 10) as Modify_The_StatesC;
+    Node.Modify_The_States->Modify_The_StatesC;    
+
     components TransportC;
     Node.Transport->TransportC;
     TransportC.ConfirmedTableC->ConfirmedTableC;
