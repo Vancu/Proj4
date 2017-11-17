@@ -15,7 +15,7 @@ class TestSim:
     CMD_ROUTE_DUMP = 3
     CMD_TEST_CLIENT = 4
     CMD_TEST_SERVER = 5
-
+    CUM_CLIENT_CLOSE = 6;
     # CHANNELS - see includes/channels.h
     COMMAND_CHANNEL="command";
     GENERAL_CHANNEL="general";
@@ -132,6 +132,9 @@ class TestSim:
     def testServer(self, destination, port):
         self.sendCMD(self.CMD_TEST_SERVER, destination, chr(port));
     
+    def ClientClose(self, ClientAddress, destination, srcPort, destPort):
+        self.sendCMD(self.CMD_CLIENT_CLOSE, source, "{0}{1}{2}".format(chr(destination),chr(srcPort),destPort));
+
     def addChannel(self, channelName, out=sys.stdout):
         print 'Adding Channel', channelName;
         self.t.addChannel(channelName, out);
@@ -150,14 +153,14 @@ def main():
     s.addChannel(s.TRANSPORT_CHANNEL);
     
     s.runTime(60);
-    #s.neighborDMP(8);
-    #s.runTime(40);
-    #s.linkstateDMP(8);
-    #s.runTime(40);
-    #s.ping(8,2, "hello 8 to 2");
-    #s.runTime(40);
-    #s.routeDMP(8);
-    #s.runTime(40);
+#    s.neighborDMP(4);
+#    s.runTime(40);
+#    s.linkstateDMP(8);
+#    s.runTime(40);
+#    s.ping(1,5, "hello 8 to 2");
+#    s.runTime(40);
+#    s.routeDMP(8);
+#    s.runTime(40);
 
 # Test out Project 3
     s.testServer(2, 80);
@@ -172,7 +175,7 @@ def main():
     s.runTime(40);
     s.testServer(2, 83);
     s.runTime(40);
-    s.testClient(3, 9, 70, 80, 4);
+    s.testClient(3, 2, 70, 82, 4);
     s.runTime(40);
 if __name__ == '__main__':
     main()

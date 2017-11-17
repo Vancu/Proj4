@@ -265,7 +265,7 @@ implementation{
            		//If we do find a match, mark it as true as it will be handled at the bottom
             		else if (myMsg->protocol == PROTOCOL_PINGREPLY)
             		{       
-               			//dbg(GENERAL_CHANNEL, "Packet Receive from %d, replying\n", myMsg->src);
+               			//dbg(GENERAL_CHANNEL, "Neighbor Packet Receive from %d, replying\n", myMsg->src);
                			length = call NeighborStorage.size();
                			//Here is where found = FALSE;
                			for(i = 0; i < length; i++)
@@ -364,7 +364,9 @@ implementation{
 
 	else if (myMsg->dest == TOS_NODE_ID && myMsg->protocol == PROTOCOL_TCP)
 	{
-		dbg(FLOODING_CHANNEL, "Received packet, UNSURE if meant for it as it has protocol_TCP. Here's it's stats. TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
+		//Now we should check to see if we can establish a connection between the source and destination
+		dbg(FLOODING_CHANNEL, "Received packet, It meant for it as it has protocol_TCP. Here's it's stats. TTL: %d,   src: %d,    dest: %d,   seq: %d\n", myMsg->TTL, myMsg->src, myMsg->dest, myMsg->seq);
+		//dbg(FLOODING_CHANNEL, "For curiocity's sake, lets try and print out payload: %d\n", myMsg->payload);
 	}
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
 	else
@@ -518,16 +520,14 @@ implementation{
    		call Transport.bind(socket, &ServerAddr);
 		call Transport.listen(socket);
    	}
+
+	else
+		dbg(TRANSPORT_CHANNEL, "Node %d was not available to bind, returned NULL(250) is there too many ports open?.\n", TOS_NODE_ID);
    }
 
    event void CommandHandler.setTestClient(uint8_t dest, uint8_t srcPort, uint8_t destPort, uint16_t transfer)
    {
-	pack SynCLient;
-	socket_store_t SynchroPacket;
-   	RoutedTable calculatedTable;
-	uint8_t i;
 	socket_addr_t ClientAddr, ServerAddr;
-	SynchroPacket.flag = call Random.rand16() % 50;
         ClientAddr.addr = TOS_NODE_ID;
         ClientAddr.port = srcPort;
         dbg(GENERAL_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
@@ -548,6 +548,7 @@ implementation{
 
    }
 
+   event void CommandHandler.ClientClose(uint8_t ClientAddress, uint8_t srcPort, uint8_t destPort, uint8_t dest){}
 
    event void CommandHandler.setAppServer(){}
 
