@@ -4,6 +4,7 @@ configuration TransportC{
    provides interface Transport;
    uses interface List<RoutedTable> as ConfirmedTableC;
    uses interface List<socket_store_t> as SocketsC;
+   //uses interface Random as Random;
 }
 
 implementation{
@@ -18,4 +19,7 @@ implementation{
    
     TransportP.ConfirmedList = ConfirmedTableC;
     TransportP.Sockets = SocketsC;
+
+    //components RandomC as RandomC;
+    //TransportP.Random = Random;
 }

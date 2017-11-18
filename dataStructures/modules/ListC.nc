@@ -102,7 +102,7 @@ implementation{
 	command t List.removefromList(uint16_t position)
 	{
 		t temp;
-		uint16_t i = 0;
+		//uint16_t i = 0;
 		uint16_t sizeofthing = size;				//IF BUGGY, REMOVE IT
 		sizeofthing--;
 		temp = container[position];

@@ -67,8 +67,13 @@ implementation{
    uint16_t sequence = 0;
    uint16_t LSP_Limit = 0;
    bool Route_LSP_STOP = FALSE;
+
+   //Global variable for index for list SocketState.
    socket_t socket;
-   
+
+   //Global variable for Transfer. For when Receive needs to handle the amount that needs to be transfered.
+   uint16_t GlobalTransfer;
+
    //This is for recording the instance of time where we make the packet that's going to be sent to Server. This is used in conjunction of TimeReceived for when server node
    //Receives it to calculate one half of RTT.
    uint16_t TimeSent;
@@ -367,7 +372,12 @@ implementation{
 		//return msg;
 		//sequence++;
 	}
-
+	
+	//Handles ALL TCP Receives. First we go through the whole list to find that specific index that has a Socket with the matching Port. Then we check to see what flag it's currently in.
+	//Flag 1 = Received a SYN from src, Send a SYN+ACK, change state to SYN_RCVD
+	//Flag 2 = Received a SYN+ACK from src, Send an ACK, change state to ESTABLISHED
+	//Flag 3 = Received a ACK from src, change state to change state to ESTABLISHED
+	//By the third flag, both the Client and Server's states are Established and are ready to send data.
 	else if (myMsg->dest == TOS_NODE_ID && myMsg->protocol == PROTOCOL_TCP)
 	{
 		socket_store_t* ClientSocketPack;
@@ -380,7 +390,7 @@ implementation{
                 uint8_t CTableIndex;
                 socket_store_t SocketFlag;
                 socket_store_t BindSocket;
-                socket_addr_t Address_Bind;
+                //socket_addr_t Address_Bind;
                 bool Modified, MadeCorrectPack, LastEstablished;
 
 		ClientSocketPack = myMsg->payload;
@@ -452,11 +462,9 @@ implementation{
 				dbg(TRANSPORT_CHANNEL, "We received a flag for ESTABLISHED, In theory, this node is in SYN_RCVD. Set this node to Established as well...\n");
 				LastEstablished = TRUE;
                         }
-                        
+                        //If we made the packet or if the pack we received is an ACK packet to signal to change state to ESTABLISHED and not send anymore packets
 			if(MadeCorrectPack || LastEstablished)
 			{			
-				//Now that we've sent the packet, we gotta change the State from LISTEN TO SYN_RCVD
-					
         			//What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
         			//if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
         			//Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
@@ -470,6 +478,7 @@ implementation{
                        				enum socket_state ChangeState;
 	                                        if (PullfromList.state == LISTEN)
 	                                        {
+							//Now that we've sent the packet, we gotta change the State from LISTEN TO SYN_RCVD
                 		                	ChangeState = SYN_RCVD;
 							dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Change state to SYN_RCVD in port: %d\n", BindSocket.src);
                                 	        }
@@ -674,9 +683,11 @@ implementation{
 	socket_addr_t ClientAddr, ServerAddr;
         socket_store_t BindSocket;
 	uint8_t i;
-	uint8_t buff[transfer];
-	uint8_t buff2[100];
+	uint8_t testBuff[transfer];
+	uint8_t testBuff2[100];
 	uint16_t testWrite, testRead;
+	
+	GlobalTransfer = transfer;
 	ClientAddr.addr = TOS_NODE_ID;
         ClientAddr.port = srcPort;
         dbg(TRANSPORT_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
@@ -705,25 +716,24 @@ implementation{
 
 		dbg(TRANSPORT_CHANNEL, "Size should be Transfer: %d\n", transfer);
 		for(i = 0; i < transfer; i++)
-		{
-			buff[i] = i + 1;
-		}
+			testBuff[i] = i + 1;
 		
-		testWrite = call Transport.write(socket, buff, transfer);
+		
+		testWrite = call Transport.write(socket, testBuff, transfer);
 		dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the first case. We should try calling in read next (theoretically server is gonna call it)\n", testWrite);
-		testRead = call Transport.read(socket, BindSocket.sendBuff, transfer);	
+		//testRead = call Transport.read(socket, BindSocket.sendBuff, transfer);	
 		
-		
+	
 		for (i = 0; i < 100; i++)
-			buff2[i] = i + 1;
+			testBuff2[i] = i + 1;
 
-		dbg(TRANSPORT_CHANNEL, "We're going to use buff2 and write into socket which already has data \n");
-		testWrite = call Transport.write(socket, buff2, 100);
+		dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 and write into socket which already has data \n");
+		testWrite = call Transport.write(socket, testBuff2, 100);
 		
                 dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the second case.\n", testWrite);
 
-		dbg(TRANSPORT_CHANNEL, "We're going to use buff2 again and write into socket which already has data \n");
-                testWrite = call Transport.write(socket, buff2, 100);		
+		dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 again and write into socket which already has data \n");
+                testWrite = call Transport.write(socket, testBuff2, 100);		
 	}
    }
 

@@ -20,10 +20,11 @@ module TransportP{
    uses interface List<socket_store_t> as Modify_The_States;
    uses interface SimpleSend as Sender;
    uses interface List<RoutedTable> as ConfirmedList;
+   //uses interface Random as Random;
 }
 
 implementation{
-
+   //Global Socket Index used in function readval and accept.
    socket_t SocketIndex; 
    //Here, we want to manipulate a variable in our list, here's the function to do that
    error_t ChangeVal(socket_t fd, socket_addr_t *addr, uint8_t flag);
@@ -31,11 +32,10 @@ implementation{
    //Here, we want to check for a flag or other data in our list. Here's our function to do that
    error_t ReadVal(socket_t fd, uint8_t flag);
 
-
-   //This searchPack is specific to a single node. This is also enabling for when this node recieves the same packet from a different
+   //This searchPack is specific to a single node. This is for when we want to alter any kind of information inside the Socket, whether it be states, addr, port, etc.
+   //Returns Success if able to alter data or FAIL if no data was altered.
    error_t ChangeVal(socket_t fd, socket_addr_t *addr, uint8_t flag)
    {
-        uint8_t i;
         socket_store_t BindSocket;
         socket_addr_t Address_Bind;
         bool Modified = FALSE;
@@ -141,13 +141,16 @@ implementation{
 	//Wasn't able to find the fd or the fd's state wasn't LISTEN
 	return FAIL;
    }
+
+    //Checks to see if there's space in List to initialize a socket with default values.
+    //By returning a socket_t, we're returning an index within List. By returning 255, We have an no more room in List.
     command socket_t Transport.socket()
     {
 	//socket_t fd;
     	socket_store_t CheckSocket;
 	uint8_t i;
-	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
 	
+	//If we have more than MAX_NUM_OF_SOCKETS, then we send a FAIL, alerting that we cannot set-up to bind and more ports	
 	if (call Sockets.size() < MAX_NUM_OF_SOCKETS)
 	{
         	CheckSocket.fd = call Sockets.size();
@@ -160,7 +163,7 @@ implementation{
 		CheckSocket.lastRcvd = 0;
 		CheckSocket.nextExpected = 0;
 		CheckSocket.effectiveWindow = SOCKET_BUFFER_SIZE;
-		
+		CheckSocket.RTT = 0;
 		//Initialize the Send and Recieve Buffers
 		for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
 		{
@@ -173,8 +176,8 @@ implementation{
 
 	else
  	{
-		dbg(TRANSPORT_CHANNEL, "Returned NULL set as 250\n");
-		return 250;
+		dbg(TRANSPORT_CHANNEL, "Returned NULL set as 255. No more room in Socket List\n");
+		return 255;
 	}	
     }
 
@@ -196,15 +199,18 @@ implementation{
 	error_t BindFunc;
 	uint8_t i;
 	socket_store_t BindSocket;
+	//Check to see if I'm able to bind. Generally if socket() function call was successfully able to return a valid index fd, BindFunc will return Success
+	//As it's able to bind addr's port in index fd.
 	BindFunc = ChangeVal(fd, addr, 1);
 	
 	i = 0;
+	//A simple print to see what ports have been Binded with TOS_NODE_ID
         while (i < call Sockets.size())
         {
                 BindSocket = call Sockets.get(i);
                 if (!BindSocket.used)
                         break;
-                dbg(TRANSPORT_CHANNEL, "We're going to attempt to print out all ports. Addr is Garbage if not assigned Index: %d.  Node: %d with port: %d\n", i, TOS_NODE_ID, BindSocket.src);
+                dbg(TRANSPORT_CHANNEL, "We're going to attempt to print out all ports. Index: %d.  Node: %d with port: %d\n", i, TOS_NODE_ID, BindSocket.src);
                 i++;
         }
 	
@@ -224,6 +230,7 @@ implementation{
     *    if not return a null socket.
     */
 
+   //Unsure if this works since I'm using Receive.receive in Node.nc to handle accepts of payload that are structs of socket_store_t
    command socket_t Transport.accept(socket_t fd)
     {
         error_t CheckFD;
@@ -255,17 +262,19 @@ implementation{
     *    from the pass buffer. This may be shorter then bufflen
     */
 
-   command uint16_t Transport.write(socket_t fd, uint8_t *buff, uint16_t bufflen)
+    //This is generally from the client side. We want to write Client's buffer content that was passed in to it's sendBuff[SOCKET_BUFFER_SIZE], 
+    //Which should then be put in a packet and sent to the server to be read (haven't implimented that aspect).
+    //In the end, we return how much data we were able to write from buff to Client's sendBuff.
+    command uint16_t Transport.write(socket_t fd, uint8_t *buff, uint16_t bufflen)
     {
-	socket_store_t WriteSocket, EditedSocket;
-        error_t CheckFD;
-        uint8_t BufferSize, BufferIndex, i;
+	socket_store_t WriteSocket;
+        uint8_t BufferIndex, i;
         uint16_t Able_to_Write;
         bool Modified = FALSE;
 
 	Able_to_Write = 0;
-        //After this, we're done transfering the contents from bug to Server's receivedBuff, now go ahead and and push those changes into the list
-        //Reason why I'm not sending to the function defined above is because we are required to write from buffer sent from this function.
+        
+	//Reason why I'm not sending to the function defined above is because we are required to write from buffer sent from this function.
         //It would be redundant to overload the function
         //WE ARE ALSO IN AN INDEX SOMEWHERE, WE'RE NOT STARTING AT FRONT
         while (!call Sockets.isEmpty())
@@ -287,13 +296,15 @@ implementation{
 				if (BufferIndex >= SOCKET_BUFFER_SIZE)
 					break;
                         }
+			
+			//Amount of data we were able to write which will be returned after moving all data to temp and back to main list
                         Able_to_Write = bufflen;
 
 			WriteSocket.lastWritten = BufferIndex;
                         //Now that we've writen content to the rcvdBuff, change the effective Window
                         dbg(TRANSPORT_CHANNEL, "Here, we successfully altered the SENDBUFFER. Maybe try printing out the values\n");
 
-                        //As a test, begin to write data from sendBuff, THIS MAY PRINT GARBAGE VALUES.
+                        //As a test, begin to write data from sendBuff, THIS MAY PRINT GARBAGE VALUES IF NOT COMPLETELY FILLED.
                         dbg(TRANSPORT_CHANNEL, "------------------------\n");
 			for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
                         {       
@@ -331,6 +342,7 @@ implementation{
     *    packet or FAIL if there are errors.
     */
 
+   //Receive is mainly handled in node.nc's Receive.receive.
    command error_t Transport.receive(pack* package)
    {
 	//One of the errors you want to check is to see if the packet received even is for the TCP Protocol
@@ -357,15 +369,16 @@ implementation{
     *    from the pass buffer. This may be shorter then bufflen
     */
 
-   command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen)
-   {
+    //This is generally from the Server side. We want to write Client's buffer content that was passed in to the server's rcvdBuff[SOCKET_BUFFER_SIZE],
+    //Which should then make a packet and send ACKs for eact time it recieves some data. Asks the client to send more data (haven't implimented that aspect).
+   //In the end, we return how much data the server was able to read from buff sent from Client's sendBuff which is written to Server's rcvdBuff. 
+    command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen)
+    {
    	socket_store_t WriteSocket, EditedSocket;
-	error_t CheckFD;
-	uint8_t BufferSize, BufferIndex, i;
-        uint16_t Able_to_Read, Able_to_Write;
+	uint8_t BufferIndex, i;
+        uint16_t Able_to_Read;
 	bool Modified = FALSE;
 	
-        //After this, we're done transfering the contents from bug to Server's receivedBuff, now go ahead and and push those changes into the list
         //Reason why I'm not sending to the function defined above is because we are required to write from buffer sent from this function.
         //It would be redundant to overload the function
         //WE ARE ALSO IN AN INDEX SOMEWHERE, WE'RE NOT STARTING AT FRONT
@@ -373,7 +386,9 @@ implementation{
        	{
         	WriteSocket = call Sockets.front();
                 call Sockets.popfront();
-                if (WriteSocket.fd == fd && !Modified)
+                
+		//Find that specific Socket and write to server's buffer
+		if (WriteSocket.fd == fd && !Modified)
                 {
 			BufferIndex = WriteSocket.nextExpected;
                 	//WriteSocket = call Sockets.get(fd);
@@ -382,14 +397,13 @@ implementation{
                 	
 			if (WriteSocket.effectiveWindow < bufflen)
                 	{
-				uint8_t AbletoBuff = WriteSocket.effectiveWindow;
+				Able_to_Read = WriteSocket.effectiveWindow;
                                	//Begin to write data from buff onto Server's Received buff
-                                for(i = 0; i < AbletoBuff; i++)
+                                for(i = 0; i < Able_to_Read; i++)
                                 {       
                                         WriteSocket.rcvdBuff[BufferIndex] = buff[i];
                                         BufferIndex++;
                                 }
-				Able_to_Write = (uint16_t) AbletoBuff;
 				WriteSocket.effectiveWindow = WriteSocket.effectiveWindow - Able_to_Read;
                 	}
 
@@ -404,8 +418,7 @@ implementation{
                               		WriteSocket.rcvdBuff[BufferIndex] = buff[i];
                               		BufferIndex++;
                         	}
-				Able_to_Write = bufflen;
-                        
+                       		Able_to_Read = bufflen; 
 	                        //Now that we've writen content to the rcvdBuff, change the effective Window
         	                WriteSocket.effectiveWindow = WriteSocket.effectiveWindow - bufflen;
 				dbg(TRANSPORT_CHANNEL, "Here, we successfully altered the RCVDBUFFER and the EffectiveWindow should theoretically be changed. Lets Print it: %d, \n", EditedSocket.effectiveWindow);
@@ -414,7 +427,7 @@ implementation{
 
 			WriteSocket.nextExpected = BufferIndex;
 			
-			//As a test, begin to write data from sendBuff, THIS MAY PRINT GARBAGE VALUES.
+			//As a test, begin to print writen data from sendBuff, THIS MAY PRINT GARBAGE VALUES.
                         dbg(TRANSPORT_CHANNEL, "----------READ VALUES--------------\n");
                         for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
                         {
@@ -437,6 +450,8 @@ implementation{
         	call Sockets.pushfront(call Modify_The_States.front());
                 call Modify_The_States.popfront();
         }	
+
+	return Able_to_Read;
    }	
 
    /**
@@ -451,11 +466,15 @@ implementation{
     * @return socket_t - returns SUCCESS if you are able to attempt
     *    a connection with the fd passed, else return FAIL.
     */
+
+   //What we do with connect is we make a struct of socket_store_t and fill in that struct with appropriate data such as the flag for SYN, what the destination port and addr is. 
+   //This struct will represent the payload of the packet which is also created in this function. The packet has the src of TOS_NODE_ID, dest of addr->addr which is where we want the packet to go
+   //along with TTL, seq, and protocol set. After the making of the packet and struct, traverse thru the Routed Table to find out which node to send it to and send it. Node.nc's Receive handles this paclet.
    command error_t Transport.connect(socket_t fd, socket_addr_t * addr)
    {
 	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
         error_t ChangeState;
-	uint8_t i, initial_RTT;
+	uint8_t i;
 	//uint8_t port;
         RoutedTable calculatedTable;
 	socket_store_t SocketFlag;
@@ -505,6 +524,8 @@ implementation{
     * @return socket_t - returns SUCCESS if you are able to attempt
     *    a closure with the fd passed, else return FAIL.
     */
+   //Simple close function which changes initial socket's state to CLOSED. The optimal way to go about this is to close connection with both the client and address
+   //At the moment, it only closes what it gives in. 
    command error_t Transport.close(socket_t fd)
    {
 	socket_addr_t * addr;
@@ -534,6 +555,7 @@ implementation{
     * @return error_t - returns SUCCESS if you are able change the state 
     *   to listen else FAIL.
     */
+   //Simple function to simply change the state of the index of Socket to be in a LISTEN state. Generally happens after a successful bind.
    command error_t Transport.listen(socket_t fd)
    {
 	socket_addr_t * addr;
