@@ -127,7 +127,7 @@ class TestSim:
 	self.sendCMD(self.CMD_LINKSTATE_DUMP, destination, "print link_table command"); 
    
     def testClient(self, source, destination, srcPort, destPort, transfer):
-        self.sendCMD(self.CMD_TEST_CLIENT, source, "{0}{1}{2}{3}".format(chr(destination),chr(srcPort),chr(destPort),transfer));
+        self.sendCMD(self.CMD_TEST_CLIENT, source, "{0}{1}{2}{3}".format(chr(destination),chr(srcPort),chr(destPort),chr(transfer)));
 
     def testServer(self, destination, port):
         self.sendCMD(self.CMD_TEST_SERVER, destination, chr(port));
@@ -175,7 +175,11 @@ def main():
     s.runTime(40);
     s.testServer(9, 83);
     s.runTime(40);
-    s.testClient(3, 9, 70, 82, 4);
+    s.testClient(3, 9, 70, 82, 5);
+    s.runTime(50);
+    s.testServer(9, 86);
+    s.runTime(40);
+    s.testServer(3, 50);
     s.runTime(40);
 if __name__ == '__main__':
     main()

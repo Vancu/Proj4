@@ -372,94 +372,145 @@ implementation{
 	{
 		socket_store_t* ClientSocketPack;
     		socket_addr_t Client_AddrPort;
-		
+		uint8_t i;
+                RoutedTable calculatedTable;
+                socket_store_t PullfromList;
+                pack SynchroPacket;
+                uint8_t Next;
+                uint8_t CTableIndex;
+                socket_store_t SocketFlag;
+                socket_store_t BindSocket;
+                socket_addr_t Address_Bind;
+                bool Modified, MadeCorrectPack, LastEstablished;
+
 		ClientSocketPack = myMsg->payload;
 		Client_AddrPort = ClientSocketPack->dest;
 		//Now we should check to see if we can establish a connection between the source and destination
 		dbg(TRANSPORT_CHANNEL, "Received packet with protocol_TCP. Here's it's stats of payload.  Addr: %d,    Port: %d  Flag is: %d\n", Client_AddrPort.addr, Client_AddrPort.port, ClientSocketPack->flag);
-		if (ClientSocketPack->flag == 1)
-		{
-	                //You theoretically are supposed to check to see if
-                        //It's working so make an SYN + ACK Packet
-		        uint8_t i;
-        		RoutedTable calculatedTable;
-        		socket_store_t PullfromList;
-        		pack SynchroPacket;
-			uint8_t Next;
-			for(i = 0; i < call SocketState.size(); i++)
-			{	
-				PullfromList = call SocketState.get(i);
-				if(Client_AddrPort.port == PullfromList.src && PullfromList.state == LISTEN && Client_AddrPort.addr == TOS_NODE_ID)
-				{
-					uint8_t CTableIndex;
-					socket_store_t SocketFlag;
-			                socket_store_t BindSocket;
-                                        socket_addr_t Address_Bind;
-                                        bool Modified = FALSE;
-		        
-			                SocketFlag = call SocketState.get(i);
-        		                //FLAG IS FOR SYN+ACK
-        		                SocketFlag.flag = 2;
-                		        SocketFlag.dest.port = ClientSocketPack->src;
-                		        SocketFlag.dest.addr = myMsg->src;
-                		        
-					SynchroPacket.src = TOS_NODE_ID;
-                		        SynchroPacket.dest = myMsg->src;
-                		        SynchroPacket.seq = myMsg->seq + 1;
-                		        SynchroPacket.TTL = MAX_TTL;
-                		        SynchroPacket.protocol = PROTOCOL_TCP;
-                		        //SynchroPacket.payload = port;
-                		        memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
-                 			for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
-                        		{       
-                                
-                                		calculatedTable = call ConfirmedTable.get(CTableIndex);
-                                		if (calculatedTable.Node_ID == SynchroPacket.dest)
-                                		{
-                                        		Next = calculatedTable.Next;
-                                        		break;
-                                		}
-                        		}
-					
-					//Now that we've sent the packet, we gotta change the State from LISTEN TO SYN_RCVD
-					
-        				//What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
-        				//if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
-        				//Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
-        				while (!call SocketState.isEmpty())
-        				{
-				                BindSocket = call SocketState.front();
-                				call SocketState.popfront();
-			             		//Modify_The_States
-			                	if (BindSocket.fd == i && !Modified)
-                				{
-                        				enum socket_state ChangeState;
-                        				ChangeState = SYN_RCVD;
-                        				BindSocket.state = ChangeState;
-                        				Modified = TRUE;
-                        				dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Change state to SYN_RCVD in port: %d\n", BindSocket.src);
-                        				call Modify_The_States.pushfront(BindSocket);
+		Modified = FALSE;
+     	        //SocketFlag = call SocketState.get(i);
+		MadeCorrectPack = FALSE;
+		LastEstablished = FALSE;
+	
+		for(i = 0; i < call SocketState.size(); i++)
+		{	
+			PullfromList = call SocketState.get(i);
+ 	                SocketFlag.dest.port = ClientSocketPack->src;
+                        SocketFlag.dest.addr = myMsg->src;
 
-                				}
-						
-						else
-                        				call Modify_The_States.pushfront(BindSocket);						
-					}
-
-				        while (!call Modify_The_States.isEmpty())
-        				{
-                				call SocketState.pushfront(call Modify_The_States.front());
-                				call Modify_The_States.popfront();
-        				}	
-				}
-				call Sender.send(SynchroPacket, Next);
+       	                SynchroPacket.src = TOS_NODE_ID;
+                        SynchroPacket.dest = myMsg->src;
+                        SynchroPacket.seq = myMsg->seq + 1;
+                        SynchroPacket.TTL = MAX_TTL;
+                        SynchroPacket.protocol = PROTOCOL_TCP;
+			if(Client_AddrPort.port == PullfromList.src && PullfromList.state == LISTEN && Client_AddrPort.addr == TOS_NODE_ID && ClientSocketPack->flag == 1)
+			{
+		      		SocketFlag = call SocketState.get(i);
+        		        //FLAG IS FOR SYN+ACK
+       		                SocketFlag.flag = 2;
+               		        SocketFlag.dest.port = ClientSocketPack->src;
+               		        SocketFlag.dest.addr = myMsg->src;
+				
+	                        memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+	                        for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+        	                {
+		
+                	                calculatedTable = call ConfirmedTable.get(CTableIndex);
+                        	        if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                	{
+                                        	Next = calculatedTable.Next;
+                                        	MadeCorrectPack = TRUE;
+                                        	break;
+                                	}
+                        	}
 			}
+
+                        else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == SYN_SENT && ClientSocketPack->flag == 2)
+                        {
+                                SocketFlag = call SocketState.get(i);
+                                //FLAG IS FOR SENDING AN ESTABLISHED
+                                SocketFlag.flag = 3;
+                                SocketFlag.dest.port = ClientSocketPack->src;
+                                SocketFlag.dest.addr = myMsg->src;
+
+                                memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+                                for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+                                {
+                                        
+                                        calculatedTable = call ConfirmedTable.get(CTableIndex);
+                                        if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                        {       
+                                                Next = calculatedTable.Next;
+                                                MadeCorrectPack = TRUE;
+                                                break;
+                                        }
+                                }
+                        }
+
+                       	else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == SYN_RCVD && ClientSocketPack->flag == 3)
+                        {
+				dbg(TRANSPORT_CHANNEL, "We received a flag for ESTABLISHED, In theory, this node is in SYN_RCVD. Set this node to Established as well...\n");
+				LastEstablished = TRUE;
+                        }
+                        
+			if(MadeCorrectPack || LastEstablished)
+			{			
+				//Now that we've sent the packet, we gotta change the State from LISTEN TO SYN_RCVD
+					
+        			//What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
+        			//if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
+        			//Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
+        			while (!call SocketState.isEmpty())
+        			{
+			                BindSocket = call SocketState.front();
+               				call SocketState.popfront();
+			       		//Modify_The_States
+		                	if (BindSocket.fd == i && !Modified)
+               				{
+                       				enum socket_state ChangeState;
+	                                        if (PullfromList.state == LISTEN)
+	                                        {
+                		                	ChangeState = SYN_RCVD;
+							dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Change state to SYN_RCVD in port: %d\n", BindSocket.src);
+                                	        }
+                                        	else if (PullfromList.state == SYN_SENT)
+                                       		{
+                                                        BindSocket.dest.addr = myMsg->src;
+                                       			ChangeState = ESTABLISHED;
+							dbg(TRANSPORT_CHANNEL, "fd found with flag SYN_SENT, Change state to ESTABLISHED in port: %d\n", BindSocket.src);
+						}
+						
+                                               	else if (PullfromList.state == SYN_RCVD && LastEstablished)
+                                                {
+							//BindSocket.dest = Client_AddrPort;
+                                                        BindSocket.dest.addr = myMsg->src;
+							ChangeState = ESTABLISHED;
+                                                        dbg(TRANSPORT_CHANNEL, "fd found with flag SYN_RCVD, Change state to ESTABLISHED in port: %d\n", BindSocket.src);
+                                                }
+                       				BindSocket.state = ChangeState;
+                       				Modified = TRUE;
+                       				call Modify_The_States.pushfront(BindSocket);	
+                			}
+						
+					else
+                        			call Modify_The_States.pushfront(BindSocket);						
+				}
+
+				while (!call Modify_The_States.isEmpty())
+        			{
+                			call SocketState.pushfront(call Modify_The_States.front());
+                			call Modify_The_States.popfront();
+        			}
+				if (MadeCorrectPack && !LastEstablished)
+				{
+					pushPack(SynchroPacket);
+					dbg(TRANSPORT_CHANNEL, "We're about to send a packet to Node: %d, which should hopefully be an immediate Neighbor\n", Next);
+                                	call Sender.send(SynchroPacket, Next);	
+				}
+			}
+
 		}
 		
-		else if (ClientSocketPack->flag == 2)
-                {
-			dbg(TRANSPORT_CHANNEL, "Received a SYN+ACK flag, Change state from SYN_RCVD to Established\n");	
-		}
 	}	
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
 	else
@@ -621,7 +672,12 @@ implementation{
    event void CommandHandler.setTestClient(uint8_t dest, uint8_t srcPort, uint8_t destPort, uint16_t transfer)
    {
 	socket_addr_t ClientAddr, ServerAddr;
-        ClientAddr.addr = TOS_NODE_ID;
+        socket_store_t BindSocket;
+	uint8_t i;
+	uint8_t buff[transfer];
+	uint8_t buff2[100];
+	uint16_t testWrite, testRead;
+	ClientAddr.addr = TOS_NODE_ID;
         ClientAddr.port = srcPort;
         dbg(TRANSPORT_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
         socket = call Transport.socket();
@@ -630,6 +686,7 @@ implementation{
         //This would be false is there's no more room
         if (socket >= 0)
         {
+		BindSocket = call SocketState.get(socket);
 		dbg(TRANSPORT_CHANNEL, "Now lets try printing a thing that's in socket... Number for FD is %d\n", socket);
         	if (call Transport.bind(socket, &ClientAddr) == SUCCESS)
 		{
@@ -637,8 +694,36 @@ implementation{
 			ServerAddr.port = destPort;
 			TimeSent = call LocalTime.get();
 			dbg(TRANSPORT_CHANNEL, "I just called a LocalTime.get() function. Print that out: %d\n", TimeSent);
-			call Transport.connect(socket,&ServerAddr);
+			if (call Transport.connect(socket,&ServerAddr) == SUCCESS)
+				dbg(TRANSPORT_CHANNEL, "We're at the end of trying to connect/Sending SYN,SYN+ACK,and ACK packets. Check to see if you were able to make both ports established.\n");
+			else
+				dbg(TRANSPORT_CHANNEL, "Unable to connect/makePack.\n");
+			//BindSocket = call SocketState.get(socket);
+			//if BindSocket.state
+			
    		}
+
+		dbg(TRANSPORT_CHANNEL, "Size should be Transfer: %d\n", transfer);
+		for(i = 0; i < transfer; i++)
+		{
+			buff[i] = i + 1;
+		}
+		
+		testWrite = call Transport.write(socket, buff, transfer);
+		dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the first case. We should try calling in read next (theoretically server is gonna call it)\n", testWrite);
+		testRead = call Transport.read(socket, BindSocket.sendBuff, transfer);	
+		
+		
+		for (i = 0; i < 100; i++)
+			buff2[i] = i + 1;
+
+		dbg(TRANSPORT_CHANNEL, "We're going to use buff2 and write into socket which already has data \n");
+		testWrite = call Transport.write(socket, buff2, 100);
+		
+                dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the second case.\n", testWrite);
+
+		dbg(TRANSPORT_CHANNEL, "We're going to use buff2 again and write into socket which already has data \n");
+                testWrite = call Transport.write(socket, buff2, 100);		
 	}
    }
 
