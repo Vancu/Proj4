@@ -48,8 +48,11 @@ implementation {
     components new TimerMilliC() as MyTimerC; //create a new timer with alias "myTimerC"
     Node.periodicTimer-> MyTimerC;
    
-    //components new TimerMilliC() as LSP_TimerC;
-    //Node.LSP_Timer-> LSP_TimerC;
+    components new TimerMilliC() as TCP_Timer_SentC;
+    Node.TCP_Timer_Sent-> TCP_Timer_SentC;
+
+    components new TimerMilliC() as LSP_Timer_ReceivedC;
+    Node.TCP_Timer_Received-> LSP_Timer_ReceivedC;
 
     components RandomC as Random;
     Node.Random -> Random;

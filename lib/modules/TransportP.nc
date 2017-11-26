@@ -31,7 +31,36 @@ implementation{
 
    //Here, we want to check for a flag or other data in our list. Here's our function to do that
    error_t ReadVal(socket_t fd, uint8_t flag);
+   
+   //Special function to set changed info for the connect function. Can't use ChangeVal because we can't overload it
+   error_t SetConnectList(socket_store_t toChange);
 
+   error_t SetConnectList(socket_store_t toChange)
+   {
+	socket_store_t OriginalSocket;
+   	while(!call Sockets.isEmpty())
+	{
+		OriginalSocket = call Sockets.front();
+		call Sockets.popfront();
+		if(OriginalSocket.fd == toChange.fd)
+		{
+			call Modify_The_States.pushfront(toChange);
+		}
+		else
+		{
+			call Modify_The_States.pushfront(OriginalSocket);
+		}		
+	}
+
+        while (!call Modify_The_States.isEmpty())
+        {
+                call Sockets.pushfront(call Modify_The_States.front());
+                call Modify_The_States.popfront();
+        }
+	
+	
+	return SUCCESS;
+   }   
    //This searchPack is specific to a single node. This is for when we want to alter any kind of information inside the Socket, whether it be states, addr, port, etc.
    //Returns Success if able to alter data or FAIL if no data was altered.
    error_t ChangeVal(socket_t fd, socket_addr_t *addr, uint8_t flag)
@@ -81,19 +110,19 @@ implementation{
                         	ChangeState = SYN_SENT;
                         	BindSocket.state = ChangeState;
                         	Modified = TRUE;
-				dbg(TRANSPORT_CHANNEL, "State is closed, should we change it to SYN_SENT.	We are going to change the state.\n");
+				dbg(TRANSPORT_CHANNEL, "State is closed, need to change it to SYN_SENT.		We are going to change the state.\n");
 				call Modify_The_States.pushfront(BindSocket);
 			}
 		}
 
-		//Flag 4 = Close
+		//Flag 4 = Close (Also used on the rare change where state was changed but wasn't able to make and send a packet)
 		else if (BindSocket.fd == fd && !Modified && flag == 4)
 		{
                         enum socket_state ChangeState;
                         ChangeState = CLOSED;
                         BindSocket.state = ChangeState;
                         Modified = TRUE;
-                        dbg(TRANSPORT_CHANNEL, "State is closed, should we change it to CLOSED.       We are going to change the state.\n");
+                        dbg(TRANSPORT_CHANNEL, "State is going to be closed.       We are going to change the state.\n");
                         call Modify_The_States.pushfront(BindSocket);			
 		}
                 else
@@ -153,7 +182,7 @@ implementation{
 	//If we have more than MAX_NUM_OF_SOCKETS, then we send a FAIL, alerting that we cannot set-up to bind and more ports	
 	if (call Sockets.size() < MAX_NUM_OF_SOCKETS)
 	{
-        	CheckSocket.fd = call Sockets.size();
+	       	CheckSocket.fd = call Sockets.size();
 		CheckSocket.used = TRUE;
 		CheckSocket.state = CLOSED;
 		CheckSocket.lastAck = 0;
@@ -176,8 +205,8 @@ implementation{
 
 	else
  	{
-		dbg(TRANSPORT_CHANNEL, "Returned NULL set as 255. No more room in Socket List\n");
-		return 255;
+		dbg(TRANSPORT_CHANNEL, "Returned NULL\n");
+		return NULL;
 	}	
     }
 
@@ -267,57 +296,82 @@ implementation{
     //In the end, we return how much data we were able to write from buff to Client's sendBuff.
     command uint16_t Transport.write(socket_t fd, uint8_t *buff, uint16_t bufflen)
     {
+	pack WriteAck;
 	socket_store_t WriteSocket;
-        uint8_t BufferIndex, i;
+        uint8_t BufferIndex, i, buff_limit, lastSent, next;
         uint16_t Able_to_Write;
-        bool Modified = FALSE;
-
+       	RoutedTable calculatedTable;
+	bool Modified, MadePacket;
+	
+	Modified = FALSE;
 	Able_to_Write = 0;
-        
+	buff_limit = 0;
+	WriteAck.src = TOS_NODE_ID;
+	WriteAck.protocol = PROTOCOL_TCP;
 	//Reason why I'm not sending to the function defined above is because we are required to write from buffer sent from this function.
         //It would be redundant to overload the function
         //WE ARE ALSO IN AN INDEX SOMEWHERE, WE'RE NOT STARTING AT FRONT
         while (!call Sockets.isEmpty())
         {
-                WriteSocket = call Sockets.front();
-                call Sockets.popfront();       
-		//In Write, we want to move data from buff to Socket's sendBuff.
-		if (WriteSocket.fd == fd && !Modified)
-                {
-                        BufferIndex = WriteSocket.lastWritten;
+		WriteSocket = call Sockets.front();
+		call Sockets.popfront();
+		
+		//Find that specific Socket and write to server's send buffer
+		if(WriteSocket.fd == fd && !Modified)
+		{
+        	        call Sockets.popfront();       
+			//In Write, we want to move data from buff to Socket's sendBuff.
+                	//The one case you can run into is if you have more than 128 bytes of data in the buffer that you want to send too
+			//So make sure you can handle at least 255 because of the datatype limit
 
-                       	//Begin to write data from buff onto Server's Received buff
-                        for(i = 0; i < bufflen; i++)
-                       	{
-                                WriteSocket.sendBuff[BufferIndex] = buff[i];
-        	                BufferIndex++;
-				
-				//We've run out of space inside sendBuff... 
-				if (BufferIndex >= SOCKET_BUFFER_SIZE)
-					break;
-                        }
+			if (bufflen > (SOCKET_BUFFER_SIZE - WriteSocket.lastWritten))
+			{
+				BufferIndex = SOCKET_BUFFER_SIZE - WriteSocket.lastWritten;
+			}
+
+			//We can write the whole buffer into Socket
+			else
+				BufferIndex = bufflen;
+      
+			lastSent = WriteSocket.lastSent;
+               		//Begin to write data from buff onto Server's Received buff. Keep in mind that we're starting off from temp's lastWritten spot. 
+        	        for(i = 0; i < (WriteSocket.lastWritten + BufferIndex); i++)
+	                {
+                		WriteSocket.sendBuff[i] = lastSent;
+        		        Able_to_Write++;
+				lastSent++;	
+                	}
 			
-			//Amount of data we were able to write which will be returned after moving all data to temp and back to main list
-                        Able_to_Write = bufflen;
+			//Write into the socket about it's last written and sent bytes
+			WriteSocket.lastWritten = i;
+			WriteSocket.lastSent = lastSent;
+			WriteSocket.flag = 4;
 
-			WriteSocket.lastWritten = BufferIndex;
-                        //Now that we've writen content to the rcvdBuff, change the effective Window
-                        dbg(TRANSPORT_CHANNEL, "Here, we successfully altered the SENDBUFFER. Maybe try printing out the values\n");
+			//Make a new pack with the updates of socket in the payload.
+			WriteAck.TTL = MAX_TTL;
+			WriteAck.seq = i;
+			WriteAck.dest = WriteSocket.dest.addr;
 
-                        //As a test, begin to write data from sendBuff, THIS MAY PRINT GARBAGE VALUES IF NOT COMPLETELY FILLED.
-                        dbg(TRANSPORT_CHANNEL, "------------------------\n");
-			for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
-                        {       
-				dbg(TRANSPORT_CHANNEL, "%d\n", WriteSocket.sendBuff[i]);
-                                
-                        }
-			dbg(TRANSPORT_CHANNEL, "------------------------\n");
-                        
-			//At this point we have writen all or as much data into the rcvdBuff, so go ahead and push into temp list where it will be pused back into main
+			//Write content into pack Writeack to be sent.
+			memcpy(WriteAck.payload, &WriteSocket, (uint8_t) sizeof(WriteSocket));
+	 	  	
+			for(i = 0; i < call ConfirmedList.size(); i++)
+        		{
+                		calculatedTable = call ConfirmedList.get(i);
+                		if (calculatedTable.Node_ID == WriteAck.dest)
+                		{
+					next = calculatedTable.Next;
+                        		MadePacket = TRUE;
+                        		break;
+                		}
+        		}
+			
+			WriteSocket.lastWritten = 0;
+			
                         Modified = TRUE;
                         call Modify_The_States.pushfront(WriteSocket);
-                }
-
+               
+		}
                 else
                         call Modify_The_States.pushfront(WriteSocket);
 
@@ -328,7 +382,12 @@ implementation{
                 call Sockets.pushfront(call Modify_The_States.front());
                 call Modify_The_States.popfront();
         }
-
+	
+	if (MadePacket)
+	{
+		dbg(TRANSPORT_CHANNEL, "Going to call Send...\n");
+		call Sender.send(WriteAck, next);
+	}
 	return Able_to_Write;
 
     }
@@ -375,10 +434,11 @@ implementation{
     command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen)
     {
    	socket_store_t WriteSocket, EditedSocket;
-	uint8_t BufferIndex, i;
-        uint16_t Able_to_Read;
+	uint8_t BufferIndex, i, lastReceived;
+        uint16_t Able_to_Read, Able_to_Write;
 	bool Modified = FALSE;
 	
+	Able_to_Write = 0;
         //Reason why I'm not sending to the function defined above is because we are required to write from buffer sent from this function.
         //It would be redundant to overload the function
         //WE ARE ALSO IN AN INDEX SOMEWHERE, WE'RE NOT STARTING AT FRONT
@@ -393,18 +453,10 @@ implementation{
 			BufferIndex = WriteSocket.nextExpected;
                 	//WriteSocket = call Sockets.get(fd);
                 	//Check to see if the size of buffer (data we plan on writing) is more than the "effective window" of that socket
-                	//Drop the packet if this is the case;
                 	
 			if (WriteSocket.effectiveWindow < bufflen)
                 	{
 				Able_to_Read = WriteSocket.effectiveWindow;
-                               	//Begin to write data from buff onto Server's Received buff
-                                for(i = 0; i < Able_to_Read; i++)
-                                {       
-                                        WriteSocket.rcvdBuff[BufferIndex] = buff[i];
-                                        BufferIndex++;
-                                }
-				WriteSocket.effectiveWindow = WriteSocket.effectiveWindow - Able_to_Read;
                 	}
 
                 	//This means we have enough space to write into the buffer
@@ -412,31 +464,56 @@ implementation{
               
 			else
                 	{
-				//Begin to write data from buff onto Server's Received buff
-                 	      	for(i = 0; i < bufflen; i++)
-                  	      	{
-                              		WriteSocket.rcvdBuff[BufferIndex] = buff[i];
-                              		BufferIndex++;
-                        	}
                        		Able_to_Read = bufflen; 
-	                        //Now that we've writen content to the rcvdBuff, change the effective Window
-        	                WriteSocket.effectiveWindow = WriteSocket.effectiveWindow - bufflen;
-				dbg(TRANSPORT_CHANNEL, "Here, we successfully altered the RCVDBUFFER and the EffectiveWindow should theoretically be changed. Lets Print it: %d, \n", EditedSocket.effectiveWindow);
-                
 			}
-
-			WriteSocket.nextExpected = BufferIndex;
 			
-			//As a test, begin to print writen data from sendBuff, THIS MAY PRINT GARBAGE VALUES.
-                        dbg(TRANSPORT_CHANNEL, "----------READ VALUES--------------\n");
-                        for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
+			lastReceived = WriteSocket.nextExpected;
+			lastReceived = 0;
+                     	for(i = 0; i < Able_to_Read; i++)
                         {
-                                dbg(TRANSPORT_CHANNEL, "%d\n", WriteSocket.rcvdBuff[i]);
-                                
+                        	WriteSocket.rcvdBuff[lastReceived] = lastReceived + WriteSocket.lastRcvd;
+                                lastReceived++;
+				Able_to_Write++;
+				
+				if(WriteSocket.effectiveWindow > 0)
+					WriteSocket.effectiveWindow--;
+
                         }
-                        dbg(TRANSPORT_CHANNEL, "----------END OF READ--------------\n");
+			
+			//Write info into socket about it's last data received and last data written onto the buffer.
+			WriteSocket.lastRcvd = i;
+			WriteSocket.lastWritten = 0;
+			
+			//Check to see if we have no more effective Window. this means that we were able to write more than 128 bytes of data into the socket
+			if (WriteSocket.effectiveWindow == 0)
+				WriteSocket.nextExpected = 0;
+			
+			//Else means we have not completely filled the data and can still recieve more.
+			else
+				WriteSocket.nextExpected = lastReceived + 1;
+			
+			dbg(TRANSPORT_CHANNEL,"After putting stuff into WriteSocket.rcvdBuff, lets go print it out. It'll then be reset. Values are - i: %d, WriteSocket.lastRcvd: %d\n", i, WriteSocket.lastRcvd);	
+			//After writing content into rcvd, print it out and then reset
+                        for(i = 0; i < WriteSocket.lastRcvd; i++)
+			{
+				dbg(TRANSPORT_CHANNEL,"%d\n", WriteSocket.rcvdBuff[i]);
+				WriteSocket.rcvdBuff[i] = 255;
+				WriteSocket.effectiveWindow++;
+					
+			}
+		
+			dbg(TRANSPORT_CHANNEL,"We're at the end. It should repeat shit\n");
+			//As a test, begin to print writen data from sendBuff, THIS MAY PRINT GARBAGE VALUES.
+                        //dbg(TRANSPORT_CHANNEL, "----------READ VALUES--------------\n");
+                        //for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
+                        //{
+                        //        dbg(TRANSPORT_CHANNEL, "%d\n", WriteSocket.rcvdBuff[i]);
+                                
+                        //}
+                        //dbg(TRANSPORT_CHANNEL, "----------END OF READ--------------\n");
 			//At this point we have writen all or as much data into the rcvdBuff, so go ahead and push into temp list where it will be pused back into main
-                        Modified = TRUE;
+                        
+			Modified = TRUE;
                         call Modify_The_States.pushfront(WriteSocket);
                	}
 
@@ -451,7 +528,7 @@ implementation{
                 call Modify_The_States.popfront();
         }	
 
-	return Able_to_Read;
+	return Able_to_Write;
    }	
 
    /**
@@ -474,6 +551,7 @@ implementation{
    {
 	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
         error_t ChangeState;
+	uint16_t next;
 	uint8_t i;
 	//uint8_t port;
         RoutedTable calculatedTable;
@@ -482,37 +560,56 @@ implementation{
 	//enum socket_state ChangeState;
         bool MadePacket = FALSE;
 
+	//Change the state of that specific fd from CLOSED to SYN_SENT
 	ChangeState = ChangeVal(fd, addr, 3);
-	SocketFlag = call Sockets.get(fd);
-	//FLAG IS FOR SYN
-	SocketFlag.flag = 1;
-	SocketFlag.dest.port = addr->port;
-	SocketFlag.dest.addr = addr->addr;
-	//port = addr->port;
-	SynchroPacket.src = TOS_NODE_ID;
-	SynchroPacket.dest = addr->addr;
-	SynchroPacket.seq = 1;
-	SynchroPacket.TTL = MAX_TTL;
-	SynchroPacket.protocol = PROTOCOL_TCP;
-	//SynchroPacket.payload = port;
-	memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));   
-	for(i = 0; i < call ConfirmedList.size(); i++)
-        {
 
-                calculatedTable = call ConfirmedList.get(i);
-                if (calculatedTable.Node_ID == addr->addr)
-                {
-			call Sender.send(SynchroPacket, calculatedTable.Next);
-			MadePacket = TRUE;
-                        break;
-                }
-        }
-	 dbg(TRANSPORT_CHANNEL, "We're out of the for loop\n");
-	if (MadePacket)
-		return SUCCESS;
+	//If we're able to change the state from Listen to SYN_SENT, make a packet with that flag and send it	
+	if (ChangeState == SUCCESS)
+	{
+		SocketFlag = call Sockets.get(fd);
+		//FLAG IS FOR SYN
+		SocketFlag.flag = 1;
+		SocketFlag.dest.port = addr->port;
+		SocketFlag.dest.addr = addr->addr;
+		//port = addr->port;
+		SynchroPacket.src = TOS_NODE_ID;
+		SynchroPacket.dest = addr->addr;
+		SynchroPacket.seq = 1;
+		SynchroPacket.TTL = MAX_TTL;
+		SynchroPacket.protocol = PROTOCOL_TCP;
+		//SynchroPacket.payload = port;
 
+
+		//What happened above is that we made a copy of datatype socket_store_t. We need to update the info in the actual list
+		SetConnectList(SocketFlag);	
+	
+		memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));   
+		for(i = 0; i < call ConfirmedList.size(); i++)
+	        {
+
+        	        calculatedTable = call ConfirmedList.get(i);
+                	if (calculatedTable.Node_ID == addr->addr)
+	                {
+				next = calculatedTable.Next;
+				//call Sender.send(SynchroPacket, calculatedTable.Next);
+				MadePacket = TRUE;
+	                        //break;
+        	        }
+	        }
+		//dbg(TRANSPORT_CHANNEL, "We're out of the for loop\n");
+		call Sender.send(SynchroPacket, next);
+		if (MadePacket)
+			return SUCCESS;
+		else
+		{
+			//For some reason, we couldn't find the packet in the routing table. Better change the SYN_SENT flag back to the CLOSED flag
+			ChangeVal(fd, addr, 4);
+			return FAIL;
+		}
+	}
+	
 	else
-		return FALSE;
+		return FAIL;
   }
 
    /**

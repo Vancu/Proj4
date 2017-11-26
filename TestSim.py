@@ -152,7 +152,7 @@ def main():
     s.addChannel(s.ROUTING_CHANNEL);
     s.addChannel(s.TRANSPORT_CHANNEL);
     
-    s.runTime(60);
+    s.runTime(70);
 #    s.neighborDMP(4);
 #    s.runTime(40);
 #    s.linkstateDMP(8);
@@ -175,11 +175,15 @@ def main():
     s.runTime(40);
     s.testServer(9, 83);
     s.runTime(40);
-    s.testClient(3, 9, 70, 82, 5);
+    s.testClient(3, 9, 70, 82, 255);
     s.runTime(50);
-    s.testServer(9, 86);
-    s.runTime(40);
-    s.testServer(3, 50);
-    s.runTime(40);
+#    s.testClient(3, 9, 71, 83, 128);
+#    s.runTime(50);
+#    s.testClient(3, 9, 72, 81, 50);
+#    s.runTime(50);
+#    s.testServer(9, 86);
+#    s.runTime(40);
+#    s.testServer(3, 50);
+#    s.runTime(40);
 if __name__ == '__main__':
     main()

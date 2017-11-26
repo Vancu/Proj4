@@ -33,8 +33,11 @@ typedef nx_struct RoutedTable {
 module Node{
    uses interface Boot;
    uses interface Timer<TMilli> as periodicTimer; //Interface that was wired above.
-   uses interface LocalTime<TMilli>;
-   //uses interface Timer<TMilli> as LSP_Timer; //Interface that was wired above.
+   uses interface LocalTime<TMilli>; //To aquire the local time of machine.
+   //2 timers to handle the sending and receiving packets for the TCP Protocol.
+   uses interface Timer<TMilli> as TCP_Timer_Sent; //Seperate timer to handle the firing of TCP Packets Sent
+   uses interface Timer<TMilli> as TCP_Timer_Received; //Seperate timer to handle the fireing of TCP Packets received
+
    //List of packs to store the info of identified packets, along if we've seen it or not  
    uses interface List<pack> as PacketStorage;   
 
@@ -53,9 +56,13 @@ module Node{
 
    uses interface CommandHandler;
    uses interface Random as Random;
+
+   //Lists for storing the RoutedTables, Tentative, Confirmed for Dijkstra
    uses interface List<RoutedTable  > as RoutedTableStorage;
    uses interface List<RoutedTable  > as Tentative;
    uses interface List<RoutedTable  > as ConfirmedTable;
+
+   //Lists for storing Socket information needed for TransportP.nc
    uses interface List<socket_store_t> as SocketState;
    uses interface List<socket_store_t> as Modify_The_States; 
    uses interface Transport;
@@ -76,9 +83,13 @@ implementation{
 
    //This is for recording the instance of time where we make the packet that's going to be sent to Server. This is used in conjunction of TimeReceived for when server node
    //Receives it to calculate one half of RTT.
-   uint16_t TimeSent;
-   uint16_t TimeReceied;
+   uint32_t TimeSent;
+   uint32_t TimeReceived;
+   uint32_t Estimated_RTT;
 
+   //Booleans for acknowledging if packet received acks
+   bool AckRcvd;
+  
    // Prototypes (aka function definitions that are exclusively in this implimentation
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
@@ -154,6 +165,69 @@ implementation{
 			
 		}
 	}
+   
+   event void TCP_Timer_Received.fired()
+   {
+	socket_store_t SockettoRead;
+	uint8_t i, AbletoRead, Index;
+	bool found;
+	//AbleoRead returns the amount of data you are able to read from the pass buffer.   	
+   
+	found = FALSE;
+	dbg(TRANSPORT_CHANNEL, "RecieveTimer fired for this node!\n");
+	//Locate that global fd index called socket and attempt to read
+	for(i = 0; i < call SocketState.size(); i++)
+	{
+		SockettoRead = call SocketState.get(i);
+		if (SockettoRead.fd == socket && !found)
+		{
+			found = TRUE;
+			Index = i;
+			break;
+		}
+	}
+
+	if (found)
+	{
+		SockettoRead = call SocketState.get(Index);
+		AbletoRead = call Transport.read(SockettoRead.fd, 0, SockettoRead.lastWritten);
+	}
+   }
+
+   event void TCP_Timer_Sent.fired()
+   {    
+	socket_store_t SockettoSend;
+        uint8_t i, AbletoSend, Index;
+        bool found;
+	//AbleoSend returns the amount of data you are able to write from the pass buffer.
+
+
+	found = FALSE;
+	dbg(TRANSPORT_CHANNEL, "SendTimer fired for this node!\n");
+	//printf("size is %d\n", call SocketState.size());
+	//Locate that global fd index called socket and attempt to write
+        for(i = 0; i < call SocketState.size(); i++)
+        {
+                SockettoSend = call SocketState.get(i);
+                if (SockettoSend.fd == socket && !found)
+                {
+                        found = TRUE;
+			Index = i;
+			break;
+                }
+        }
+	
+	if (found)
+	{
+		SockettoSend = call SocketState.get(Index);
+		while (GlobalTransfer > 0)
+                {
+  	              dbg(TRANSPORT_CHANNEL, "GlobalTransfer: %d\n", GlobalTransfer);
+                      AbletoSend = call Transport.write(socket, 0, GlobalTransfer);
+                      GlobalTransfer = GlobalTransfer - AbletoSend;
+                }
+	}
+   }
 
    event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len){
   	//dbg(FLOODING_CHANNEL, "Packet Received\n"); 
@@ -392,7 +466,11 @@ implementation{
                 socket_store_t BindSocket;
                 //socket_addr_t Address_Bind;
                 bool Modified, MadeCorrectPack, LastEstablished;
+		uint16_t bufferLength;
+		bool Start_TCPSendTimer;
 
+		Start_TCPSendTimer = FALSE;
+		bufferLength = 0;
 		ClientSocketPack = myMsg->payload;
 		Client_AddrPort = ClientSocketPack->dest;
 		//Now we should check to see if we can establish a connection between the source and destination
@@ -415,6 +493,7 @@ implementation{
                         SynchroPacket.protocol = PROTOCOL_TCP;
 			if(Client_AddrPort.port == PullfromList.src && PullfromList.state == LISTEN && Client_AddrPort.addr == TOS_NODE_ID && ClientSocketPack->flag == 1)
 			{
+				dbg(TRANSPORT_CHANNEL, "Syn packet recieved into port %d\n", PullfromList.src);
 		      		SocketFlag = call SocketState.get(i);
         		        //FLAG IS FOR SYN+ACK
        		                SocketFlag.flag = 2;
@@ -437,7 +516,10 @@ implementation{
 
                         else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == SYN_SENT && ClientSocketPack->flag == 2)
                         {
-                                SocketFlag = call SocketState.get(i);
+				TimeReceived = call LocalTime.get();
+                                Estimated_RTT = TimeReceived - TimeSent;
+				dbg(TRANSPORT_CHANNEL, "SynAck packet recived into port %d, send = %d, recieve = %d, RTT = %d\n", PullfromList.src,  TimeSent, TimeReceived, Estimated_RTT);
+				SocketFlag = call SocketState.get(i);
                                 //FLAG IS FOR SENDING AN ESTABLISHED
                                 SocketFlag.flag = 3;
                                 SocketFlag.dest.port = ClientSocketPack->src;
@@ -452,7 +534,8 @@ implementation{
                                         {       
                                                 Next = calculatedTable.Next;
                                                 MadeCorrectPack = TRUE;
-                                                break;
+                                                Start_TCPSendTimer = TRUE;
+						break;
                                         }
                                 }
                         }
@@ -461,14 +544,69 @@ implementation{
                         {
 				dbg(TRANSPORT_CHANNEL, "We received a flag for ESTABLISHED, In theory, this node is in SYN_RCVD. Set this node to Established as well...\n");
 				LastEstablished = TRUE;
+				call TCP_Timer_Received.startPeriodic(100000);
+                       		dbg(TRANSPORT_CHANNEL, "Ack1 packet recieved into port %d with RTT %d\n", PullfromList.src, Estimated_RTT);
+              				
                         }
+			
+			else if (ClientSocketPack->flag == 4)
+			{
+				//uint16_t bufferLength;
+				bufferLength = myMsg->seq;
+				call Transport.read(ClientSocketPack->fd, ClientSocketPack->sendBuff, bufferLength);
+				dbg(TRANSPORT_CHANNEL, "We're out of read in flag 4, in recieve node.nc\n");
+				
+	                        SocketFlag = call SocketState.get(i);
+                                //FLAG IS FOR SENDING A (thing)
+                                SocketFlag.flag = 5;
+                                SocketFlag.dest.port = ClientSocketPack->src;
+                                SocketFlag.dest.addr = myMsg->src;
+				SocketFlag.nextExpected = bufferLength + 1;
+
+                               	memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+                                for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+                                {                              
+                                        calculatedTable = call ConfirmedTable.get(CTableIndex);
+                                        if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                        {       
+                                                Next = calculatedTable.Next;
+                                                MadeCorrectPack = TRUE;
+                                                break;
+                                        }
+                                }	
+		
+			}
+			else if (ClientSocketPack->flag == 5)
+			{
+				dbg(TRANSPORT_CHANNEL, "Recieved dataAck from %d!\n", myMsg->src);
+				AckRcvd = TRUE;
+			}
+			
+			//HANDLES CLOSING OF THE SOCKET'S CONNECTION
+			else if (ClientSocketPack->flag == 6 && (Client_AddrPort.port == PullfromList.src))
+			{
+				if (call Transport.close(ClientSocketPack->fd) == SUCCESS)
+					dbg(TRANSPORT_CHANNEL, "Successfully closed the socket.\n");
+				else
+					dbg(TRANSPORT_CHANNEL, "Error in closing socket.\n");
+				//while (!call SocketState.isEmpty())
+                                //{
+				//	BindSocket = call SocketState.front();
+                                //        call SocketState.popfront();
+                                //        if (BindSocket.fd == i && !Modified)
+                                //        {
+						
+				//	}
+				//}	
+			}
                         //If we made the packet or if the pack we received is an ACK packet to signal to change state to ESTABLISHED and not send anymore packets
 			if(MadeCorrectPack || LastEstablished)
 			{			
         			//What we want to do is because we cannot directly modify the content in the list, we want to check to see if we have a match in FD
         			//if there's a match and it hasn't been found already, we want to modify it's contents so that it's directly bonded. If not, we just
         			//Move the contents are either continue looking if we haven't found it or just move it while we already modified one of the indexes.
-        			while (!call SocketState.isEmpty())
+        			
+				while (!call SocketState.isEmpty())
         			{
 			                BindSocket = call SocketState.front();
                				call SocketState.popfront();
@@ -476,27 +614,49 @@ implementation{
 		                	if (BindSocket.fd == i && !Modified)
                				{
                        				enum socket_state ChangeState;
-	                                        if (PullfromList.state == LISTEN)
+	                                        bool AlteredState;
+						AlteredState = FALSE;
+						//All these else ifs originally had PullfromList.state instead of BindSocket. 
+						
+						if (ClientSocketPack->flag == 4)
+                                                {
+                                                        BindSocket.lastAck = bufferLength + 1;
+                                                        dbg(TRANSPORT_CHANNEL, "fd found with flag 4, Change the lastAck and print that number out: %d\n", BindSocket.lastAck);
+                                                }
+						
+						else if (BindSocket.state == LISTEN)
 	                                        {
 							//Now that we've sent the packet, we gotta change the State from LISTEN TO SYN_RCVD
                 		                	ChangeState = SYN_RCVD;
+							AlteredState = TRUE;
 							dbg(TRANSPORT_CHANNEL, "fd found with flag LISTEN, Change state to SYN_RCVD in port: %d\n", BindSocket.src);
                                 	        }
-                                        	else if (PullfromList.state == SYN_SENT)
+                                        	else if (BindSocket.state == SYN_SENT)
                                        		{
                                                         BindSocket.dest.addr = myMsg->src;
-                                       			ChangeState = ESTABLISHED;
+                                       			AlteredState = TRUE;
+							ChangeState = ESTABLISHED;
 							dbg(TRANSPORT_CHANNEL, "fd found with flag SYN_SENT, Change state to ESTABLISHED in port: %d\n", BindSocket.src);
 						}
 						
-                                               	else if (PullfromList.state == SYN_RCVD && LastEstablished)
+                                               	else if (BindSocket.state == SYN_RCVD && LastEstablished)
                                                 {
 							//BindSocket.dest = Client_AddrPort;
                                                         BindSocket.dest.addr = myMsg->src;
+							AlteredState = TRUE;
 							ChangeState = ESTABLISHED;
                                                         dbg(TRANSPORT_CHANNEL, "fd found with flag SYN_RCVD, Change state to ESTABLISHED in port: %d\n", BindSocket.src);
                                                 }
-                       				BindSocket.state = ChangeState;
+						
+						//else if (ClientSocketPack->flag == 4)
+						//{
+						//	BindSocket.lastAck = bufferLength + 1;	
+						//	dbg(TRANSPORT_CHANNEL, "fd found with flag 4, Change the lastAck and print that number out: %d\n", BindSocket.lastAck);
+						//}
+						
+						if (AlteredState)
+                       					BindSocket.state = ChangeState;
+						
                        				Modified = TRUE;
                        				call Modify_The_States.pushfront(BindSocket);	
                 			}
@@ -510,15 +670,27 @@ implementation{
                 			call SocketState.pushfront(call Modify_The_States.front());
                 			call Modify_The_States.popfront();
         			}
-				if (MadeCorrectPack && !LastEstablished)
-				{
-					pushPack(SynchroPacket);
-					dbg(TRANSPORT_CHANNEL, "We're about to send a packet to Node: %d, which should hopefully be an immediate Neighbor\n", Next);
-                                	call Sender.send(SynchroPacket, Next);	
-				}
+				//if (MadeCorrectPack && !LastEstablished)
+				//{
+				//	pushPack(SynchroPacket);
+				//	dbg(TRANSPORT_CHANNEL, "We're about to send a packet to Node: %d, which should hopefully be an immediate Neighbor\n", Next);
+                                //	if (Start_TCPSendTimer)
+				//		call TCP_Timer_Sent.startPeriodic(25000);
+				//	call Sender.send(SynchroPacket, Next);	
+				//}
 			}
 
+		
 		}
+		if (MadeCorrectPack && !LastEstablished)
+                {
+                	//pushPack(SynchroPacket);
+                        dbg(TRANSPORT_CHANNEL, "We're about to send a packet to Node: %d, which should hopefully be an immediate Neighbor\n", Next);
+                        if (Start_TCPSendTimer)
+           	             call TCP_Timer_Sent.startPeriodic(25000);
+
+                        call Sender.send(SynchroPacket, Next);
+              	}
 		
 	}	
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
@@ -714,26 +886,26 @@ implementation{
 			
    		}
 
-		dbg(TRANSPORT_CHANNEL, "Size should be Transfer: %d\n", transfer);
-		for(i = 0; i < transfer; i++)
-			testBuff[i] = i + 1;
+		//dbg(TRANSPORT_CHANNEL, "Size should be Transfer: %d\n", transfer);
+		//for(i = 0; i < transfer; i++)
+		//	testBuff[i] = i + 1;
 		
 		
-		testWrite = call Transport.write(socket, testBuff, transfer);
-		dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the first case. We should try calling in read next (theoretically server is gonna call it)\n", testWrite);
+		//testWrite = call Transport.write(socket, testBuff, transfer);
+		//dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the first case. We should try calling in read next (theoretically server is gonna call it)\n", testWrite);
 		//testRead = call Transport.read(socket, BindSocket.sendBuff, transfer);	
 		
 	
-		for (i = 0; i < 100; i++)
-			testBuff2[i] = i + 1;
+		//for (i = 0; i < 100; i++)
+		//	testBuff2[i] = i + 1;
 
-		dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 and write into socket which already has data \n");
-		testWrite = call Transport.write(socket, testBuff2, 100);
+		//dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 and write into socket which already has data \n");
+		//testWrite = call Transport.write(socket, testBuff2, 100);
 		
-                dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the second case.\n", testWrite);
+                //dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the second case.\n", testWrite);
 
-		dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 again and write into socket which already has data \n");
-                testWrite = call Transport.write(socket, testBuff2, 100);		
+		//dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 again and write into socket which already has data \n");
+                //testWrite = call Transport.write(socket, testBuff2, 100);		
 	}
    }
 
