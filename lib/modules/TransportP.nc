@@ -450,6 +450,8 @@ implementation{
 					}
 				}
 
+				dbg(TRANSPORT_CHANNEL,"WriteSocket.lastSent is %d\n", WriteSocket.lastSent);
+
 				for(i = 0; i < 128; i++)
                                         TemporarySendBuff[i] = WriteSocket.sendBuff[i];
                                 for(i = 0; i <= sending; i++)
@@ -613,18 +615,25 @@ implementation{
 			else
 				WriteSocket.nextExpected = lastReceived + 1;
 			
+			Able_to_Read = 0;
 			dbg(TRANSPORT_CHANNEL,"After putting stuff into WriteSocket.rcvdBuff, lets go print it out. It'll then be reset. Values are - i: %d, WriteSocket.lastRcvd: %d\n", i, WriteSocket.lastRcvd);	
 			//After writing content into rcvd, print it out and then reset
                         for(i = 0; i < WriteSocket.lastRcvd; i++)
 			{
-				if (WriteSocket.rcvdBuff[i] != 255)
+				if (WriteSocket.rcvdBuff[i] != 255 && WriteSocket.rcvdBuff[i] != 0)
 				{
 					dbg(TRANSPORT_CHANNEL,"Index: %d of rcvdBuff has value: %d\n", i, WriteSocket.rcvdBuff[i]);
 					//dbg(TRANSPORT_CHANNEL,"%d\n", WriteSocket.rcvdBuff[i]);
 					WriteSocket.rcvdBuff[i] = 255;
 					WriteSocket.effectiveWindow++;
-				}	
+					Able_to_Read++;
+				}
+				
+				else
+					break;	
 			}
+			
+			dbg(TRANSPORT_CHANNEL,"Hold on, I wanna see Able_to_Read's value. It is: %d \n", Able_to_Read);
 			WriteSocket.effectiveWindow = 128;
 			WriteSocket.nextExpected = 0;
 			
@@ -647,7 +656,7 @@ implementation{
                 call Modify_The_States.popfront();
         }	
 
-	return Able_to_Write;
+	return Able_to_Read;
    }	
 
    /**

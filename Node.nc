@@ -1309,7 +1309,20 @@ implementation{
 
    //This message should be sent from the client to the server. 
    //The server should reply to the client that made the request with a list of users that is currently connected to the server.
-   event void CommandHandler.AppPrintUsers(){}
+   event void CommandHandler.AppPrintUsers()
+   {
+	uint8_t i, j;
+	for(i = 0; i < call ListofUsernames.size(); i++)
+        {	
+		//Realistically, it wouldn't go up to 255 as it would stop when it finds a '\n'
+		//for(j = 0; j < 255; j++)
+		//{
+	                //printf("%c", ListofUsernames[i].[j]);
+	                //if (ListofUsernames[i].[j] == '\n')
+                        //	break;
+		//}
+	}	
+   }
 
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t* payload, uint8_t length){
       Package->src = src;

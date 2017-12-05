@@ -210,10 +210,10 @@ def main():
 #    s.runTime(40);
     s.appLogin(4, 30, "testUser\r\n");
     s.runTime(40);
-    s.appSendGlobal(4, "Fuckme\r\n");
+    s.appSendGlobal(4, "testMessage\r\n");
     s.runTime(40);
 #Combined total of chars between both arrays have a max of 20 chars. Anything higher than 20 will cause it to crash...
-    s.appSendPrivate(5, "FuckingUseruewqosy\r\n", "Fk\r\n");
+    s.appSendPrivate(5, "testin\r\n", "limitis20chars\r\n");
     s.runTime(40);
 if __name__ == '__main__':
     main()
