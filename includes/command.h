@@ -18,6 +18,11 @@ enum{
 	CMD_TEST_SERVER=5,
 	CMD_CLIENT_CLOSE=6,
 	CMD_KILL=6,
+	CMD_APP_LOGIN=7,			//Connecting to Server
+	CMD_APP_GLOBAL=8,			//Broadcasting a Message
+	CMD_APP_PRIVATE=9,			//Unicasting a Message
+	CMD_APP_PRINTUSERS=10,			//Print Users
+	CMD_APP_SETSERVER=11,
 	CMD_ERROR=9
 };
 

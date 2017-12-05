@@ -294,15 +294,24 @@ implementation{
     //This is generally from the client side. We want to write Client's buffer content that was passed in to it's sendBuff[SOCKET_BUFFER_SIZE], 
     //Which should then be put in a packet and sent to the server to be read (haven't implimented that aspect).
     //In the end, we return how much data we were able to write from buff to Client's sendBuff.
-    command uint16_t Transport.write(socket_t fd, uint8_t *buff, uint16_t bufflen)
+    command uint16_t Transport.write(socket_t fd, uint8_t *buff, uint16_t bufflen, uint8_t flag)
     {
 	pack WriteAck;
 	socket_store_t WriteSocket;
-        uint8_t BufferIndex, i, buff_limit, lastSent, next;
-        uint16_t Able_to_Write;
+        uint8_t BufferIndex, i, buff_limit, lastSent, next, sending;
+        uint8_t sendLimit[8];
+	uint8_t TemporarySendBuff[128];
+	uint16_t Able_to_Write;
        	RoutedTable calculatedTable;
 	bool Modified, MadePacket;
+
+
+	for(i = 0; i < 8; i++)
+		sendLimit[i] = 255;
 	
+	for(i = 0; i < 128; i++)
+		TemporarySendBuff[i] = 255;
+		
 	Modified = FALSE;
 	Able_to_Write = 0;
 	buff_limit = 0;
@@ -319,70 +328,185 @@ implementation{
 		//Find that specific Socket and write to server's send buffer
 		if(WriteSocket.fd == fd && !Modified)
 		{
-        	        call Sockets.popfront();       
+			//Why did i popfront twice???
+        	        //call Sockets.popfront();       
+		
 			//In Write, we want to move data from buff to Socket's sendBuff.
                 	//The one case you can run into is if you have more than 128 bytes of data in the buffer that you want to send too
 			//So make sure you can handle at least 255 because of the datatype limit
 
-			if (bufflen > (SOCKET_BUFFER_SIZE - WriteSocket.lastWritten))
-			{
-				BufferIndex = SOCKET_BUFFER_SIZE - WriteSocket.lastWritten;
-			}
+			//This is for the first case...
+			if(bufflen > 0)
+                        {
+				if (bufflen > SOCKET_BUFFER_SIZE)
+				{
+					BufferIndex = SOCKET_BUFFER_SIZE;
+				}
 
-			//We can write the whole buffer into Socket
-			else
-				BufferIndex = bufflen;
+				//We can write the whole buffer into Socket
+				else
+					BufferIndex = bufflen;
       
-			lastSent = WriteSocket.lastSent;
-               		//Begin to write data from buff onto Server's Received buff. Keep in mind that we're starting off from temp's lastWritten spot. 
-        	        for(i = 0; i < (WriteSocket.lastWritten + BufferIndex); i++)
-	                {
-                		WriteSocket.sendBuff[i] = lastSent;
-        		        Able_to_Write++;
-				lastSent++;	
-                	}
-			
-			//Write into the socket about it's last written and sent bytes
-			WriteSocket.lastWritten = i;
-			WriteSocket.lastSent = lastSent;
-			WriteSocket.flag = 4;
-
-			//Make a new pack with the updates of socket in the payload.
-			WriteAck.TTL = MAX_TTL;
-			WriteAck.seq = i;
-			WriteAck.dest = WriteSocket.dest.addr;
-
-			//Write content into pack Writeack to be sent.
-			memcpy(WriteAck.payload, &WriteSocket, (uint8_t) sizeof(WriteSocket));
-	 	  	
-			for(i = 0; i < call ConfirmedList.size(); i++)
-        		{
-                		calculatedTable = call ConfirmedList.get(i);
-                		if (calculatedTable.Node_ID == WriteAck.dest)
-                		{
-					next = calculatedTable.Next;
-                        		MadePacket = TRUE;
-                        		break;
+				lastSent = WriteSocket.lastSent;
+        	       		//Begin to write data from buff onto Server's Received buff. Keep in mind that we're starting off from temp's lastWritten spot. 
+        		        for(i = 0; i < (WriteSocket.lastWritten + BufferIndex); i++)
+	                	{
+	                		WriteSocket.sendBuff[i] = buff[lastSent];
+        			        //Able_to_Write++;
+					lastSent++;	
                 		}
-        		}
 			
-			WriteSocket.lastWritten = 0;
-			
-                        Modified = TRUE;
-                        call Modify_The_States.pushfront(WriteSocket);
-               
-		}
-                else
-                        call Modify_The_States.pushfront(WriteSocket);
-
-        }
-
-        while (!call Modify_The_States.isEmpty())
-        {
-                call Sockets.pushfront(call Modify_The_States.front());
-                call Modify_The_States.popfront();
-        }
+				//Write into the socket about it's last written and sent bytes
+				WriteSocket.lastWritten = lastSent;
+				//WriteSocket.lastSent = lastSent;
+				WriteSocket.flag = 4;
 	
+				//Make a new pack with the updates of socket in the payload.
+				WriteAck.TTL = MAX_TTL;
+				WriteAck.seq = i;
+				WriteAck.dest = WriteSocket.dest.addr;
+	
+				//To determine what flag the socket_store_t variable should be for sending inside payload, check from the flag that was sent originally
+				//Later on, more flags will be sent which is going to be for the Application side.
+
+				//if (flag == 4)
+				//	WriteSocket.flag = flag;
+				
+				lastSent = 0;
+				for(i = 0; i < 8; i++)
+				{
+					if(WriteSocket.lastSent < 128)
+					{
+						sendLimit[i] = buff[WriteSocket.lastSent];				
+						Able_to_Write++;			
+					}
+	
+					else
+					{
+						lastSent = i;
+						break;	
+					}
+					WriteSocket.lastSent++;
+				}
+				WriteSocket.lastSent = Able_to_Write;
+			
+				for(i = 0; i < 128; i++)
+					TemporarySendBuff[i] = WriteSocket.sendBuff[i];				
+				for(i = 0; i < lastSent; i++)
+					WriteSocket.sendBuff[i] = sendLimit[i];
+
+			        dbg(TRANSPORT_CHANNEL,"Out of curiocity, lets print out content inside sendBuff. This is located on bufflen > 0. Able_to_Write is: %d \n", Able_to_Write);
+                                for(i = 0; i <= Able_to_Write; i++)
+                                {
+                                        dbg(TRANSPORT_CHANNEL,"Index: %d of sendBuff has value: %d\n", i, WriteSocket.sendBuff[i]);
+                                }		
+				//Write content into pack Writeack to be sent.
+				memcpy(WriteAck.payload, &WriteSocket, (uint8_t) sizeof(WriteSocket));
+	 	  	
+				//move contents from TemporarySendBuff back into copy of socket's sendBuff
+				for(i = 0; i < 128; i++)
+					WriteSocket.sendBuff[i] = TemporarySendBuff[i];
+
+                                //dbg(TRANSPORT_CHANNEL,"Out of curiocity, lets print out content inside sendBuff. This is located on bufflen > 0 after memcpy and wrote back to it. Able_to_Write is: %d \n", Able_to_Write);
+                                //for(i = 0; i <= Able_to_Write; i++)
+                                //{
+                                //        dbg(TRANSPORT_CHANNEL,"Index: %d of sendBuff has value: %d\n", i, WriteSocket.sendBuff[i]);
+                                //}
+				
+				//Now lets go ahead and route to send our packet.
+				for(i = 0; i < call ConfirmedList.size(); i++)
+        			{
+                			calculatedTable = call ConfirmedList.get(i);
+                			if (calculatedTable.Node_ID == WriteAck.dest)
+	                		{
+						next = calculatedTable.Next;
+                	        		MadePacket = TRUE;
+                        			break;
+                			}
+	        		}
+			
+				//WriteSocket.lastWritten = 0;
+		
+	                        Modified = TRUE;
+        	                call Modify_The_States.pushfront(WriteSocket);
+               			//return Able_to_Write;
+			}
+			
+			//When bufflen is not > 0
+			else
+			{
+				//Able_to_Write = 0;
+				for(i = 0; i < 8; i++)
+				{
+					if (WriteSocket.lastSent < WriteSocket.lastWritten && WriteSocket.lastSent < 128)
+					{
+						sendLimit[i] = WriteSocket.sendBuff[i];
+						sending = i + 1;
+						WriteSocket.lastSent++;
+					}
+					else
+					{
+						sendLimit[i] = 255;	
+					}
+				}
+
+				for(i = 0; i < 128; i++)
+                                        TemporarySendBuff[i] = WriteSocket.sendBuff[i];
+                                for(i = 0; i <= sending; i++)
+                                        WriteSocket.sendBuff[i] = sendLimit[i];							
+
+                                //Write into the socket about it's last written and sent bytes
+                                //WriteSocket.lastWritten = lastSent;
+                                //WriteSocket.lastSent = lastSent;
+                                WriteSocket.flag = 4;
+			
+				//Make a new pack with the updates of socket in the payload.
+                                WriteAck.TTL = MAX_TTL;
+                                WriteAck.seq = i;
+                                WriteAck.dest = WriteSocket.dest.addr;
+				
+				dbg(TRANSPORT_CHANNEL,"Out of curiocity, lets print out content inside sendBuff. This is inside the else statement.\n");
+                                for(i = 0; i <= sending; i++)
+				{
+					dbg(TRANSPORT_CHANNEL,"Index: %d of sendBuff has value: %d\n", i, WriteSocket.sendBuff[i]);
+				}				
+				//Write content into pack Writeack to be sent.
+				memcpy(WriteAck.payload, &WriteSocket, (uint8_t) sizeof(WriteSocket));
+
+                                //move contents from TemporarySendBuff back into copy of socket's sendBuff
+                                for(i = 0; i < 128; i++)
+                                        WriteSocket.sendBuff[i] = TemporarySendBuff[i];
+
+                                //Now lets go ahead and route to send our packet.
+                                for(i = 0; i < call ConfirmedList.size(); i++)
+                                {
+                                        calculatedTable = call ConfirmedList.get(i);
+                                        if (calculatedTable.Node_ID == WriteAck.dest)
+                                        {
+                                                next = calculatedTable.Next;
+                                                MadePacket = TRUE;
+                                                break;
+                                        }
+                                }
+
+                                //WriteSocket.lastWritten = 0;
+				Able_to_Write = sending;
+                                Modified = TRUE;
+                                call Modify_The_States.pushfront(WriteSocket);
+			}
+		}
+
+		//Not the correct fd, dont make and changes and continue
+        	else
+             	        call Modify_The_States.pushfront(WriteSocket);
+	}
+        
+    	while (!call Modify_The_States.isEmpty())
+       	{
+       	       call Sockets.pushfront(call Modify_The_States.front());
+      	       call Modify_The_States.popfront();
+     	}
+		
 	if (MadePacket)
 	{
 		dbg(TRANSPORT_CHANNEL, "Going to call Send...\n");
@@ -431,7 +555,7 @@ implementation{
     //This is generally from the Server side. We want to write Client's buffer content that was passed in to the server's rcvdBuff[SOCKET_BUFFER_SIZE],
     //Which should then make a packet and send ACKs for eact time it recieves some data. Asks the client to send more data (haven't implimented that aspect).
    //In the end, we return how much data the server was able to read from buff sent from Client's sendBuff which is written to Server's rcvdBuff. 
-    command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen)
+    command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen, uint8_t flag)
     {
    	socket_store_t WriteSocket, EditedSocket;
 	uint8_t BufferIndex, i, lastReceived;
@@ -450,39 +574,36 @@ implementation{
 		//Find that specific Socket and write to server's buffer
 		if (WriteSocket.fd == fd && !Modified)
                 {
-			BufferIndex = WriteSocket.nextExpected;
-                	//WriteSocket = call Sockets.get(fd);
+			
+			//BufferIndex = WriteSocket.nextExpected;
                 	//Check to see if the size of buffer (data we plan on writing) is more than the "effective window" of that socket
                 	
 			if (WriteSocket.effectiveWindow < bufflen)
-                	{
 				Able_to_Read = WriteSocket.effectiveWindow;
-                	}
-
+                	
                 	//This means we have enough space to write into the buffer
                 	//You start with that Socket's (Server's) next expected and move(write) content from buff to recieved buffer
               
 			else
-                	{
                        		Able_to_Read = bufflen; 
-			}
 			
 			lastReceived = WriteSocket.nextExpected;
-			lastReceived = 0;
                      	for(i = 0; i < Able_to_Read; i++)
                         {
-                        	WriteSocket.rcvdBuff[lastReceived] = lastReceived + WriteSocket.lastRcvd;
+                        	WriteSocket.rcvdBuff[lastReceived] = buff[i];
                                 lastReceived++;
 				Able_to_Write++;
 				
 				if(WriteSocket.effectiveWindow > 0)
 					WriteSocket.effectiveWindow--;
+				else
+					break;
 
                         }
-			
 			//Write info into socket about it's last data received and last data written onto the buffer.
 			WriteSocket.lastRcvd = i;
-			WriteSocket.lastWritten = 0;
+			WriteSocket.rcvdBuff[lastReceived] = 255;
+			//WriteSocket.lastWritten = 0;
 			
 			//Check to see if we have no more effective Window. this means that we were able to write more than 128 bytes of data into the socket
 			if (WriteSocket.effectiveWindow == 0)
@@ -496,23 +617,21 @@ implementation{
 			//After writing content into rcvd, print it out and then reset
                         for(i = 0; i < WriteSocket.lastRcvd; i++)
 			{
-				dbg(TRANSPORT_CHANNEL,"%d\n", WriteSocket.rcvdBuff[i]);
-				WriteSocket.rcvdBuff[i] = 255;
-				WriteSocket.effectiveWindow++;
-					
+				if (WriteSocket.rcvdBuff[i] != 255)
+				{
+					dbg(TRANSPORT_CHANNEL,"Index: %d of rcvdBuff has value: %d\n", i, WriteSocket.rcvdBuff[i]);
+					//dbg(TRANSPORT_CHANNEL,"%d\n", WriteSocket.rcvdBuff[i]);
+					WriteSocket.rcvdBuff[i] = 255;
+					WriteSocket.effectiveWindow++;
+				}	
 			}
-		
+			WriteSocket.effectiveWindow = 128;
+			WriteSocket.nextExpected = 0;
+			
+			for(i = 0; i < 128; i++)
+				WriteSocket.rcvdBuff[i] = 255;
+
 			dbg(TRANSPORT_CHANNEL,"We're at the end. It should repeat shit\n");
-			//As a test, begin to print writen data from sendBuff, THIS MAY PRINT GARBAGE VALUES.
-                        //dbg(TRANSPORT_CHANNEL, "----------READ VALUES--------------\n");
-                        //for(i = 0; i < SOCKET_BUFFER_SIZE; i++)
-                        //{
-                        //        dbg(TRANSPORT_CHANNEL, "%d\n", WriteSocket.rcvdBuff[i]);
-                                
-                        //}
-                        //dbg(TRANSPORT_CHANNEL, "----------END OF READ--------------\n");
-			//At this point we have writen all or as much data into the rcvdBuff, so go ahead and push into temp list where it will be pused back into main
-                        
 			Modified = TRUE;
                         call Modify_The_States.pushfront(WriteSocket);
                	}
@@ -547,7 +666,7 @@ implementation{
    //What we do with connect is we make a struct of socket_store_t and fill in that struct with appropriate data such as the flag for SYN, what the destination port and addr is. 
    //This struct will represent the payload of the packet which is also created in this function. The packet has the src of TOS_NODE_ID, dest of addr->addr which is where we want the packet to go
    //along with TTL, seq, and protocol set. After the making of the packet and struct, traverse thru the Routed Table to find out which node to send it to and send it. Node.nc's Receive handles this paclet.
-   command error_t Transport.connect(socket_t fd, socket_addr_t * addr)
+   command error_t Transport.connect(socket_t fd, socket_addr_t * addr, uint8_t type)
    {
 	//dbg(GENERAL_CHANNEL, "Successfully called a thing. Here's the Node ID that called it: %d\n", TOS_NODE_ID);
         error_t ChangeState;
@@ -567,8 +686,14 @@ implementation{
 	if (ChangeState == SUCCESS)
 	{
 		SocketFlag = call Sockets.get(fd);
-		//FLAG IS FOR SYN
-		SocketFlag.flag = 1;
+		//FLAG IS FOR SYN FOR TCP IF TYPE = 1
+		if (type == 1)
+			SocketFlag.flag = 1;
+		
+		//Flag 7 is for the application aspect where we want to connect to server.
+		else
+			SocketFlag.flag = 7;
+
 		SocketFlag.dest.port = addr->port;
 		SocketFlag.dest.addr = addr->addr;
 		//port = addr->port;

@@ -83,6 +83,31 @@ implementation{
                 signal CommandHandler.ClientClose(buff[0], buff[1], buff[2], buff[3]);
                 break;
 
+	    case CMD_APP_LOGIN:
+                dbg(COMMAND_CHANNEL, "Command Type: Application Server Login\n");
+                signal CommandHandler.AppLogin(buff[0], &buff[1]);
+                break;
+
+	    case CMD_APP_GLOBAL:
+                dbg(COMMAND_CHANNEL, "Command Type: Broadcast a Message\n");
+                signal CommandHandler.AppBroadCast(&buff[0]);
+                break;
+
+	    case CMD_APP_PRIVATE:
+                dbg(COMMAND_CHANNEL, "Command Type: Sending a Unicast\n");
+                signal CommandHandler.AppUnicast(&buff[0], &buff[1]);
+                break;
+
+	    case CMD_APP_PRINTUSERS:
+                dbg(COMMAND_CHANNEL, "Command Type: PrintUsers\n");
+                signal CommandHandler.AppPrintUsers();
+                break;
+
+	    case CMD_APP_SETSERVER:
+		dbg(COMMAND_CHANNEL, "Command Type: SetAppServer\n");
+		signal CommandHandler.setAppServer();
+		break;
+
             default:
                 dbg(COMMAND_CHANNEL, "CMD_ERROR: \"%d\" does not match any known commands.\n", msg->id);
                 break;

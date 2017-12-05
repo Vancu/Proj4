@@ -72,6 +72,9 @@ implementation {
     components new ListC(socket_store_t, 10) as Modify_The_StatesC;
     Node.Modify_The_States->Modify_The_StatesC;    
 
+    components new ListC(char*, 32) as ListofUsernamesC;
+    Node.ListofUsernames->ListofUsernamesC;
+
     components TransportC;
     Node.Transport->TransportC;
     TransportC.ConfirmedTableC->ConfirmedTableC;

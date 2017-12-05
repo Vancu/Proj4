@@ -66,6 +66,9 @@ module Node{
    uses interface List<socket_store_t> as SocketState;
    uses interface List<socket_store_t> as Modify_The_States; 
    uses interface Transport;
+
+   //List for storing Usernames for each node. (Used by both the server and client)
+   uses interface List<char*> as ListofUsernames;
 }
 
 //These are stored in each node
@@ -79,8 +82,10 @@ implementation{
    socket_t socket;
 
    //Global variable for Transfer. For when Receive needs to handle the amount that needs to be transfered.
-   uint16_t GlobalTransfer;
-
+   uint16_t GlobalTransfer = 0;
+   //uint16_t TransferLimit = 0;
+   uint16_t MaximumTransfer = 0;
+   
    //This is for recording the instance of time where we make the packet that's going to be sent to Server. This is used in conjunction of TimeReceived for when server node
    //Receives it to calculate one half of RTT.
    uint32_t TimeSent;
@@ -89,7 +94,10 @@ implementation{
 
    //Booleans for acknowledging if packet received acks
    bool AckRcvd;
-  
+ 
+   //Global char array so that receive can access it after it's been defined in App_Login
+   char GlobalChar[255]; 
+
    // Prototypes (aka function definitions that are exclusively in this implimentation
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
@@ -190,7 +198,7 @@ implementation{
 	if (found)
 	{
 		SockettoRead = call SocketState.get(Index);
-		AbletoRead = call Transport.read(SockettoRead.fd, 0, SockettoRead.lastWritten);
+		AbletoRead = call Transport.read(SockettoRead.fd, 0, SockettoRead.lastWritten, SockettoRead.flag);
 	}
    }
 
@@ -223,7 +231,7 @@ implementation{
 		while (GlobalTransfer > 0)
                 {
   	              dbg(TRANSPORT_CHANNEL, "GlobalTransfer: %d\n", GlobalTransfer);
-                      AbletoSend = call Transport.write(socket, 0, GlobalTransfer);
+                      AbletoSend = call Transport.write(socket, 0, GlobalTransfer, SockettoSend.flag);
                       GlobalTransfer = GlobalTransfer - AbletoSend;
                 }
 	}
@@ -457,7 +465,8 @@ implementation{
 		socket_store_t* ClientSocketPack;
     		socket_addr_t Client_AddrPort;
 		uint8_t i;
-                RoutedTable calculatedTable;
+                uint8_t ArraytoWrite [GlobalTransfer+1];
+		RoutedTable calculatedTable;
                 socket_store_t PullfromList;
                 pack SynchroPacket;
                 uint8_t Next;
@@ -465,10 +474,11 @@ implementation{
                 socket_store_t SocketFlag;
                 socket_store_t BindSocket;
                 //socket_addr_t Address_Bind;
-                bool Modified, MadeCorrectPack, LastEstablished;
+                bool Modified, MadeCorrectPack, LastEstablished, Flag2Transfer, Flag2SendChar;
 		uint16_t bufferLength;
 		bool Start_TCPSendTimer;
 
+		Flag2Transfer = Flag2SendChar = FALSE;
 		Start_TCPSendTimer = FALSE;
 		bufferLength = 0;
 		ClientSocketPack = myMsg->payload;
@@ -534,33 +544,38 @@ implementation{
                                         {       
                                                 Next = calculatedTable.Next;
                                                 MadeCorrectPack = TRUE;
-                                                Start_TCPSendTimer = TRUE;
+                                                //Start_TCPSendTimer = TRUE;
 						break;
                                         }
                                 }
+				Flag2Transfer = TRUE;
                         }
 
                        	else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == SYN_RCVD && ClientSocketPack->flag == 3)
                         {
 				dbg(TRANSPORT_CHANNEL, "We received a flag for ESTABLISHED, In theory, this node is in SYN_RCVD. Set this node to Established as well...\n");
 				LastEstablished = TRUE;
-				call TCP_Timer_Received.startPeriodic(100000);
-                       		dbg(TRANSPORT_CHANNEL, "Ack1 packet recieved into port %d with RTT %d\n", PullfromList.src, Estimated_RTT);
+				//call TCP_Timer_Received.startPeriodic(100000);
+                       		//dbg(TRANSPORT_CHANNEL, "Ack1 packet recieved into port %d with RTT %d\n", PullfromList.src, Estimated_RTT);
               				
                         }
 			
 			else if (ClientSocketPack->flag == 4)
 			{
+				//ArraytoWrite = myMsg->payload;
 				//uint16_t bufferLength;
-				bufferLength = myMsg->seq;
-				call Transport.read(ClientSocketPack->fd, ClientSocketPack->sendBuff, bufferLength);
+				bufferLength = 8;
+				for(i = 0; i < bufferLength; i++)
+					dbg(TRANSPORT_CHANNEL, "We're going to print sendbuff in clientsocketpack. Index is %d and value is %d\n", i, ClientSocketPack->sendBuff[i]);
+
+				call Transport.read(ClientSocketPack->fd, ClientSocketPack->sendBuff, bufferLength, ClientSocketPack->flag);
 				dbg(TRANSPORT_CHANNEL, "We're out of read in flag 4, in recieve node.nc\n");
 				
 	                        SocketFlag = call SocketState.get(i);
                                 //FLAG IS FOR SENDING A (thing)
-                                SocketFlag.flag = 5;
                                 SocketFlag.dest.port = ClientSocketPack->src;
-                                SocketFlag.dest.addr = myMsg->src;
+                                SocketFlag.dest.addr = myMsg->src;                                
+				SocketFlag.flag = 5;
 				SocketFlag.nextExpected = bufferLength + 1;
 
                                	memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
@@ -578,8 +593,29 @@ implementation{
 			}
 			else if (ClientSocketPack->flag == 5)
 			{
+				uint16_t sizeTransfered;
 				dbg(TRANSPORT_CHANNEL, "Recieved dataAck from %d!\n", myMsg->src);
 				AckRcvd = TRUE;
+
+				if(GlobalTransfer > 0)
+				{
+					sizeTransfered = call Transport.write(socket,0,0, ClientSocketPack->flag);
+					GlobalTransfer = GlobalTransfer - sizeTransfered;
+				}
+				else if (GlobalTransfer <= 0 && MaximumTransfer > 0)
+				{
+					uint8_t SecArray[MaximumTransfer];
+					GlobalTransfer = MaximumTransfer;
+					MaximumTransfer = 0;
+	
+					for(i = 0; i < GlobalTransfer; i++)
+					{
+						SecArray[i] = i + 128;
+						printf("Print statement in Flag 5 prints out number  %d\n", SecArray[i]);
+					}
+					sizeTransfered = call Transport.write(socket,SecArray,GlobalTransfer, ClientSocketPack->flag);
+					GlobalTransfer = GlobalTransfer - sizeTransfered;
+				}
 			}
 			
 			//HANDLES CLOSING OF THE SOCKET'S CONNECTION
@@ -599,6 +635,99 @@ implementation{
 				//	}
 				//}	
 			}
+
+			else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == LISTEN && Client_AddrPort.addr == TOS_NODE_ID && ClientSocketPack->flag == 7)
+			{
+				dbg(TRANSPORT_CHANNEL, "Server side successfully recieved a packet to start it's own version of the triple handshake.\n");
+	                        dbg(TRANSPORT_CHANNEL, "Syn packet recieved into port %d\n", PullfromList.src);
+                                SocketFlag = call SocketState.get(i);
+                                //FLAG IS FOR SYN+ACK for Application layer
+                                SocketFlag.flag = 8;
+                                SocketFlag.dest.port = ClientSocketPack->src;
+                                SocketFlag.dest.addr = myMsg->src;
+
+                                memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+                                for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+                                {
+
+                                        calculatedTable = call ConfirmedTable.get(CTableIndex);
+                                        if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                        {
+                                                Next = calculatedTable.Next;
+                                                MadeCorrectPack = TRUE;
+                                                break;
+                                       }
+                                }
+			}
+
+                        else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == SYN_SENT && ClientSocketPack->flag == 8)
+                        {
+                                dbg(TRANSPORT_CHANNEL, "SynAck packet recived into port %d\n", PullfromList.src);
+                                SocketFlag = call SocketState.get(i);
+                                //FLAG IS FOR SENDING AN ESTABLISHED
+                                SocketFlag.flag = 9;
+                                SocketFlag.dest.port = ClientSocketPack->src;
+                                SocketFlag.dest.addr = myMsg->src;
+
+                                memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+                                for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+                                {
+
+                                        calculatedTable = call ConfirmedTable.get(CTableIndex);
+                                        if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                        {
+                                                Next = calculatedTable.Next;
+                                                MadeCorrectPack = TRUE;
+                                                //Start_TCPSendTimer = TRUE;
+                                                break;
+                                        }
+                                }
+                                //Flag2Transfer = TRUE;
+                        }
+
+                        else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == SYN_RCVD && ClientSocketPack->flag == 9)
+                        {
+                                dbg(TRANSPORT_CHANNEL, "We received a flag for ESTABLISHED, In theory, this node is in SYN_RCVD. Set this node to Established as well...\n");
+                                //LastEstablished = TRUE;
+                                //call TCP_Timer_Received.startPeriodic(100000);
+                                //dbg(TRANSPORT_CHANNEL, "Ack1 packet recieved into port %d with RTT %d\n", PullfromList.src, Estimated_RTT);
+
+                                dbg(TRANSPORT_CHANNEL, "Server side successfully recieved a packet which is at the end of the triple handshake.\n");
+                                dbg(TRANSPORT_CHANNEL, "Ack packet recieved into port %d, lets send one more ack to client so it can now send data to me (the server)\n", PullfromList.src);
+                                SocketFlag = call SocketState.get(i);
+                                //FLAG IS FOR SYN+ACK for Application layer
+                                SocketFlag.flag = 10;
+                                SocketFlag.dest.port = ClientSocketPack->src;
+                                SocketFlag.dest.addr = myMsg->src;
+
+                                memcpy(SynchroPacket.payload, &SocketFlag, (uint8_t) sizeof(SocketFlag));
+                                for(CTableIndex = 0; CTableIndex < call ConfirmedTable.size(); CTableIndex++)
+                                {
+
+                                        calculatedTable = call ConfirmedTable.get(CTableIndex);
+                                        if (calculatedTable.Node_ID == SynchroPacket.dest)
+                                        {
+                                                Next = calculatedTable.Next;
+                                                MadeCorrectPack = TRUE;
+                                                break;
+                                       }
+                                }
+
+                        }
+
+			else if (Client_AddrPort.port == PullfromList.src && PullfromList.state == ESTABLISHED && ClientSocketPack->flag == 10)
+			{
+				dbg(TRANSPORT_CHANNEL, "Client side successfully recieved a packet and we're completely out of the triple handshake. Now send my username to server.\n");
+				dbg(TRANSPORT_CHANNEL, "My username should technically be in GlobalTransfer and a Global Char array. Print it out first to see if that's the case\n");
+				dbg(TRANSPORT_CHANNEL, "Then see if I can send that to the server. Here I go!\n");
+
+		                //Verify to see that username is successfully inputed onto the GlobalChar char array
+                		for(i = 0; i < GlobalTransfer; i++)
+                        		printf("%c", GlobalChar[i]);
+				Flag2SendChar = TRUE;
+				
+			}
+
                         //If we made the packet or if the pack we received is an ACK packet to signal to change state to ESTABLISHED and not send anymore packets
 			if(MadeCorrectPack || LastEstablished)
 			{			
@@ -639,7 +768,7 @@ implementation{
 							dbg(TRANSPORT_CHANNEL, "fd found with flag SYN_SENT, Change state to ESTABLISHED in port: %d\n", BindSocket.src);
 						}
 						
-                                               	else if (BindSocket.state == SYN_RCVD && LastEstablished)
+                                               	else if (BindSocket.state == SYN_RCVD /*&& LastEstablished */)
                                                 {
 							//BindSocket.dest = Client_AddrPort;
                                                         BindSocket.dest.addr = myMsg->src;
@@ -679,18 +808,55 @@ implementation{
 				//	call Sender.send(SynchroPacket, Next);	
 				//}
 			}
-
-		
+	
 		}
 		if (MadeCorrectPack && !LastEstablished)
                 {
                 	//pushPack(SynchroPacket);
                         dbg(TRANSPORT_CHANNEL, "We're about to send a packet to Node: %d, which should hopefully be an immediate Neighbor\n", Next);
-                        if (Start_TCPSendTimer)
-           	             call TCP_Timer_Sent.startPeriodic(25000);
+                        //if (Start_TCPSendTimer)
+           	        //     call TCP_Timer_Sent.startPeriodic(25000);
 
                         call Sender.send(SynchroPacket, Next);
-              	}
+              		
+			if(Flag2Transfer)
+			{
+				uint16_t sizeTransfered;
+				//uint8_t ArraytoWrite[GlobalTransfer+1]; 
+				for(i = 0; i < GlobalTransfer; i++)
+				{	
+					ArraytoWrite[i] = i;
+					//dbg(TRANSPORT_CHANNEL, "ArraytoWrite is... %d, this is goung to be inside the write function\n", ArraytoWrite[i]);
+				}
+				
+				dbg(TRANSPORT_CHANNEL, "flag before calling write inside condition Flag2Transfer is: %d, GlobalTransfer which represents bufferlen in Write is %d\n", ClientSocketPack->flag, GlobalTransfer);
+				sizeTransfered = call Transport.write(socket,ArraytoWrite, GlobalTransfer, ClientSocketPack->flag);
+				dbg(TRANSPORT_CHANNEL, "sizeTransfered has value of %d\n", sizeTransfered);
+				GlobalTransfer = GlobalTransfer - sizeTransfered;
+					
+						
+			}
+
+			
+			//Start timer after we send the ACK pack for server as at this point, 
+			//the client's state is established and we need to wait for server to finish establishing before sending data.
+		       	//if (Start_TCPSendTimer)
+                        //	call TCP_Timer_Sent.startPeriodic(25000);
+		}
+	        if (Flag2SendChar)
+                {
+			uint16_t sizeTransfered;
+                	char data[GlobalTransfer];
+                        for(i = 0; i < GlobalTransfer; i++)
+                        {
+                        	data[i] = GlobalChar[i];
+                                dbg(TRANSPORT_CHANNEL, "data's %d index is... %c, this is going to be inside the write function\n", i, data[i]);
+                        }
+
+                        dbg(TRANSPORT_CHANNEL, "flag before calling write inside Flag2SendChar is: %d, GlobalTransfer which represents bufferlen in Write is %d\n", ClientSocketPack->flag, GlobalTransfer);
+                       	sizeTransfered = call Transport.write(socket,data, GlobalTransfer, ClientSocketPack->flag);
+                }
+	
 		
 	}	
 	//Packet not meant for it, decrement TTL, mark it as seen after making a new pack, and broadcast to neighhors
@@ -847,7 +1013,7 @@ implementation{
    	}
 
 	else
-		dbg(TRANSPORT_CHANNEL, "Node %d was not available to bind, returned NULL(250) is there too many ports open?.\n", TOS_NODE_ID);
+		dbg(TRANSPORT_CHANNEL, "Node %d was not available to bind, returned NULL value. is there too many ports open?.\n", TOS_NODE_ID);
    }
 
    event void CommandHandler.setTestClient(uint8_t dest, uint8_t srcPort, uint8_t destPort, uint16_t transfer)
@@ -859,11 +1025,15 @@ implementation{
 	uint8_t testBuff2[100];
 	uint16_t testWrite, testRead;
 	
-	GlobalTransfer = transfer;
+	GlobalTransfer = transfer + 1;
+	MaximumTransfer = GlobalTransfer;
 	ClientAddr.addr = TOS_NODE_ID;
         ClientAddr.port = srcPort;
         dbg(TRANSPORT_CHANNEL, "This is for TestClient. We're gonna try to bind Node: %d with srcPort: %d \n", TOS_NODE_ID, srcPort);
-        socket = call Transport.socket();
+        
+   	//Checks to see if there's space in List to initialize a socket with default values.
+    	//By returning a socket_t, we're returning an index within List. By returning 255, We have an no more room in List.
+	socket = call Transport.socket();
         
         //There's at least room in the Socket to bind Clientsocket to SocketAddress
         //This would be false is there's no more room
@@ -876,8 +1046,18 @@ implementation{
 			ServerAddr.addr = dest;
 			ServerAddr.port = destPort;
 			TimeSent = call LocalTime.get();
-			dbg(TRANSPORT_CHANNEL, "I just called a LocalTime.get() function. Print that out: %d\n", TimeSent);
-			if (call Transport.connect(socket,&ServerAddr) == SUCCESS)
+			//dbg(TRANSPORT_CHANNEL, "I just called a LocalTime.get() function. Print that out: %d\n", TimeSent);
+			
+			if(MaximumTransfer > 127)
+			{
+				MaximumTransfer = MaximumTransfer - 128;
+				GlobalTransfer = 128;
+			}
+
+			else
+				MaximumTransfer = 0;
+			
+			if (call Transport.connect(socket,&ServerAddr, 1) == SUCCESS)
 				dbg(TRANSPORT_CHANNEL, "We're at the end of trying to connect/Sending SYN,SYN+ACK,and ACK packets. Check to see if you were able to make both ports established.\n");
 			else
 				dbg(TRANSPORT_CHANNEL, "Unable to connect/makePack.\n");
@@ -885,35 +1065,251 @@ implementation{
 			//if BindSocket.state
 			
    		}
-
-		//dbg(TRANSPORT_CHANNEL, "Size should be Transfer: %d\n", transfer);
-		//for(i = 0; i < transfer; i++)
-		//	testBuff[i] = i + 1;
-		
-		
-		//testWrite = call Transport.write(socket, testBuff, transfer);
-		//dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the first case. We should try calling in read next (theoretically server is gonna call it)\n", testWrite);
-		//testRead = call Transport.read(socket, BindSocket.sendBuff, transfer);	
-		
-	
-		//for (i = 0; i < 100; i++)
-		//	testBuff2[i] = i + 1;
-
-		//dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 and write into socket which already has data \n");
-		//testWrite = call Transport.write(socket, testBuff2, 100);
-		
-                //dbg(TRANSPORT_CHANNEL, "We were able to write %d amount of data for the second case.\n", testWrite);
-
-		//dbg(TRANSPORT_CHANNEL, "We're going to use testBuff2 again and write into socket which already has data \n");
-                //testWrite = call Transport.write(socket, testBuff2, 100);		
 	}
    }
 
-   event void CommandHandler.ClientClose(uint8_t ClientAddress, uint8_t srcPort, uint8_t destPort, uint8_t dest){}
+   event void CommandHandler.ClientClose(uint16_t ClientAddress, uint8_t srcPort, uint8_t destPort, uint16_t dest)
+   {
+	socket_store_t toClose;
+	uint8_t i;
+	socket_addr_t ClientAddr, ServerAddr;
 
-   event void CommandHandler.setAppServer(){}
+	
+	for (i = 0; i < call SocketState.size(); i++)
+	{
+		toClose = call SocketState.get(i);
+	        //ClientAddr = toClose.src;
+	        ServerAddr = toClose.dest;
+	
+		//We found the right port to close
+		if (toClose.src == srcPort /*&& ClientAddr.addr == ClientAddress */ && ServerAddr.port == destPort && ServerAddr.addr == dest)	
+		{
+			//We found the correct socket to close, now close that one with the associated dest port/addr
+			
+			//make packet to close other one
+			pack ClosePack;
+			uint8_t next;
+			socket_store_t CloseServer;
+			RoutedTable calculatedTable;
+			error_t ChangeState;
+			bool MadePacket;
+
+			MadePacket = FALSE;
+			//First close that socket we just found that matched all the above content.
+			call Transport.close(toClose.fd);
+			
+			toClose.flag = 6;
+			//make packet to close other one
+			ClosePack.src = TOS_NODE_ID;
+			ClosePack.dest = dest;
+			ClosePack.seq = 1;
+			ClosePack.TTL = MAX_TTL;
+			ClosePack.protocol = PROTOCOL_TCP;				
+		
+			memcpy(ClosePack.payload, &toClose, (uint8_t) sizeof(toClose));
+			for(i = 0; i < call ConfirmedTable.size(); i++)
+	        	{
+
+        		        calculatedTable = call ConfirmedTable.get(i);
+                		if (calculatedTable.Node_ID == dest)
+	        	        {
+					next = calculatedTable.Next;
+					MadePacket = TRUE;
+	        	                break;
+        		        }
+			}
+			
+			if(MadePacket)
+				call Sender.send(ClosePack, next);	
+			else
+				dbg(TRANSPORT_CHANNEL, "There's an error in making a packet to close the destination port and address... \n");		
+		}
+		
+	}
+   }
+
+   //The server should be setup to listen on port 41 at node id 1.
+   event void CommandHandler.setAppServer()
+   {	
+	socket_t tempSocketServer;
+   	socket_addr_t ServerAddr;	
+
+	//Technically any node can be a server but in the testsim.py, it will only request that node 1 opens at port 41.
+	ServerAddr.port = 41;
+	ServerAddr.addr = TOS_NODE_ID;
+
+	tempSocketServer = call Transport.socket();
+	
+	//Check to see if we were able to create a socket for server 
+	if(tempSocketServer >= 0)
+	{
+        	if (call Transport.bind(tempSocketServer, &ServerAddr) == SUCCESS)
+        	{
+			call Transport.listen(tempSocketServer);
+			dbg(TRANSPORT_CHANNEL, "Successfuly set up Node %d as a Server for the application Chat Client and Server\n", TOS_NODE_ID );	
+		}
+	}  
+   }
 
    event void CommandHandler.setAppClient(){}
+
+   event void CommandHandler.AppLogin(uint8_t clientport, char* username)
+   {
+   	uint8_t i;
+	bool EndofChar;
+	socket_addr_t ClientAddr, ServerAddr;
+
+	GlobalTransfer = 0;	
+	i = 0;
+	EndofChar = FALSE;
+	
+	//Setting up the client to connect to server which is at Node:1 at Port: 41
+	socket = call Transport.socket();
+
+	if(socket >= 0)
+	{
+		ClientAddr.addr = TOS_NODE_ID;
+		ClientAddr.port = clientport;
+
+		printf("Lets attempt to print out the username, while also storing it into GlobalChar and incrementing MaximumTransfer and GlobalTransfer \n");
+		while(!EndofChar)
+		{
+			GlobalChar[i] = username[i];
+			GlobalTransfer++;
+			MaximumTransfer++;
+			if(username[i] == '\n')
+				EndofChar = TRUE;	
+		
+			else
+				i++;
+
+			//printf("%c", username[i]);
+			//if (username[i] == '\n')
+			//	!EndofChar = TRUE;
+			//i++;
+		}
+
+		//Verify to see that username is successfully inputed onto the GlobalChar char array
+		for(i = 0; i < GlobalTransfer; i++)
+			printf("%c", GlobalChar[i]);
+
+		printf("We're at the end. Check to see if it printed the username length correctly. Username Length is  %d\n", GlobalTransfer);
+	
+		printf("We're gonna attempt to bind the ClientAddr and then connect to ServerAddr \n");
+                if (call Transport.bind(socket, &ClientAddr) == SUCCESS)
+                {
+                        ServerAddr.addr = 1;
+                        ServerAddr.port = 41;
+                        dbg(TRANSPORT_CHANNEL, "I just called successfully binded. Now try to connect to server\n");
+
+                        if (call Transport.connect(socket,&ServerAddr,2) == SUCCESS)
+                                dbg(TRANSPORT_CHANNEL, "We're at the end of trying to connect/Sending SYN,SYN+ACK,and ACK packets for Login. Check to see if you were able to make both ports established.\n");
+                        else
+                                dbg(TRANSPORT_CHANNEL, "Unable to connect/makePack.\n");
+                        //BindSocket = call SocketState.get(socket);
+                        //if BindSocket.state
+
+                }
+	}
+
+	else
+		dbg(TRANSPORT_CHANNEL, "There's an error in the call of Transport.socket(); Perhaps we're at the limit of sockets open at the node? \n");
+   }
+
+   //create a command for the client to receive through injected packets. 
+   //Once the server receives this message, it should then broadcast this message to all connected clients. 
+   //The message that is sent to all the clients should include the initial clients user.
+   event void CommandHandler.AppBroadCast(char* message)
+   {
+        uint8_t i;
+        bool EndofChar;
+	socket_addr_t ServerAddr;
+    
+	GlobalTransfer = 0;
+	i = 0;
+        EndofChar = FALSE;
+
+        printf("Lets attempt to store message into GlobalChar and incrementing MaximumTransfer and GlobalTransfer \n");
+	while(!EndofChar)
+        {
+        	GlobalChar[i] = message[i];
+                GlobalTransfer++;
+                MaximumTransfer++;
+              	
+		if(message[i] == '\n')
+     	        	EndofChar = TRUE;
+
+                else
+                        i++;
+
+                //printf("%c", username[i]);
+               	//if (username[i] == '\n')
+               	//      !EndofChar = TRUE;
+               	//i++;
+        }        
+   	
+	printf("Now lets try printing out GlobalChar which is our message...\n");
+        //Verify to see that message is successfully inputed onto the GlobalChar char array
+        for(i = 0; i < GlobalTransfer; i++) 
+ 	       printf("%c", GlobalChar[i]);
+
+        printf("We're at the end. Check to see if it printed the username length correctly. Username Length is  %d\n", GlobalTransfer);
+   }
+
+   //This function is similar to the above however however instead of the server broadcasting it to all the clients, it will only broadcast to client specified.
+   event void CommandHandler.AppUnicast(char* username, char* message)
+   {
+        uint8_t i, originalspot;
+        bool ContinueUserPrint;
+	bool ContinueMessagePrint;
+        char* testUsername = "FuckingUser";
+	
+        i = 0;
+        ContinueUserPrint = TRUE;
+	ContinueMessagePrint = TRUE;
+        printf("Lets attempt to print out the message. \nUser: ");
+        while(ContinueUserPrint)
+        {
+                printf("%c", username[i]);
+                if (username[i] == '\n')
+		{
+                        ContinueUserPrint = FALSE;
+                	break;
+		}
+		i++;
+        }
+        originalspot = i;
+	printf("wants to send the message: ");
+        
+	while(ContinueMessagePrint)
+        {
+                printf("%c", message[i]);
+                if (message[i] == '\n')
+		{
+                        ContinueMessagePrint = FALSE;
+                	break;
+		}
+		i++;
+        }
+        printf("We're at the end. now lets see if we can match our testUsername with username\n");
+ 	//ContinueMessagePrint = TRUE;
+	//i = 0;
+	//while(ContinueMessagePrint)
+        //{
+        //        printf("%c", message[i]);
+        //        if (message[originalspot] == testUsername[i] && )
+        //        {
+        //                ContinueMessagePrint = FALSE;
+        //                break;
+        //        }
+        //        i++;
+        //}
+
+   }
+
+   //This message should be sent from the client to the server. 
+   //The server should reply to the client that made the request with a list of users that is currently connected to the server.
+   event void CommandHandler.AppPrintUsers(){}
 
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t* payload, uint8_t length){
       Package->src = src;

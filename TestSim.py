@@ -15,7 +15,13 @@ class TestSim:
     CMD_ROUTE_DUMP = 3
     CMD_TEST_CLIENT = 4
     CMD_TEST_SERVER = 5
-    CUM_CLIENT_CLOSE = 6;
+    CMD_CLIENT_CLOSE = 6
+    CMD_APP_LOGIN = 7
+    CMD_APP_GLOBAL = 8
+    CMD_APP_PRIVATE = 9
+    CMD_APP_PRINTUSERS = 10
+    CMD_APP_SET_SERVER = 11
+
     # CHANNELS - see includes/channels.h
     COMMAND_CHANNEL="command";
     GENERAL_CHANNEL="general";
@@ -135,10 +141,25 @@ class TestSim:
     def ClientClose(self, ClientAddress, destination, srcPort, destPort):
         self.sendCMD(self.CMD_CLIENT_CLOSE, source, "{0}{1}{2}".format(chr(destination),chr(srcPort),destPort));
 
+    def appLogin(self, Source, ClientPort, Username):
+        self.sendCMD(self.CMD_APP_LOGIN, Source, "{0}{1}".format(chr(ClientPort), Username));
+
+    def appSendGlobal(self, Source, Message):
+        self.sendCMD(self.CMD_APP_GLOBAL, Source, Message);
+
+    def appSendPrivate(self, Source, Username, Message):
+        self.sendCMD(self.CMD_APP_PRIVATE, Source, "{0}{1}".format(Username, Message));
+
+    def setAppServer(self, destination):
+        self.sendCMD(self.CMD_APP_SET_SERVER, destination, "setserver command");
+
+    def appPrintUsers(self, Source):
+        self.sendCMD(self.CMD_APP_PRINTUSERS, Source);
+
     def addChannel(self, channelName, out=sys.stdout):
         print 'Adding Channel', channelName;
         self.t.addChannel(channelName, out);
-	
+    
 def main():
     s = TestSim();
     s.runTime(10);
@@ -163,20 +184,22 @@ def main():
 #    s.runTime(40);
 
 # Test out Project 3
-    s.testServer(9, 80);
-    s.runTime(40);
-    s.testServer(5, 80);
-    s.runTime(40);
-    s.testServer(4, 60);
-    s.runTime(40);
-    s.testServer(9, 81);
-    s.runTime(40);
+#    s.testServer(9, 80);
+#    s.runTime(40);
+#    s.testServer(5, 80);
+#    s.runTime(40);
+#    s.testServer(4, 60);
+#    s.runTime(40);
+#    s.testServer(9, 81);
+#    s.runTime(40);
     s.testServer(9, 82);
     s.runTime(40);
-    s.testServer(9, 83);
+    s.setAppServer(1);
     s.runTime(40);
-    s.testClient(3, 9, 70, 82, 255);
+
+    s.testClient(3, 9, 70, 82, 100);
     s.runTime(50);
+
 #    s.testClient(3, 9, 71, 83, 128);
 #    s.runTime(50);
 #    s.testClient(3, 9, 72, 81, 50);
@@ -185,5 +208,12 @@ def main():
 #    s.runTime(40);
 #    s.testServer(3, 50);
 #    s.runTime(40);
+    s.appLogin(4, 30, "testUser\r\n");
+    s.runTime(40);
+    s.appSendGlobal(4, "Fuckme\r\n");
+    s.runTime(40);
+#Combined total of chars between both arrays have a max of 20 chars. Anything higher than 20 will cause it to crash...
+    s.appSendPrivate(5, "FuckingUseruewqosy\r\n", "Fk\r\n");
+    s.runTime(40);
 if __name__ == '__main__':
     main()
